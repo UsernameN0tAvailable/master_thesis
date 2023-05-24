@@ -118,6 +118,9 @@ if __name__ == "__main__":
     # stochastic gradient descent opt
     optimizer = get_optimizer(model, args.optimizer)
 
+
+    print(f'Starting ... Optimizer: {args.optimizer}, Shift: {shift}')
+
     # Training and validation loop
     for epoch in range(num_epochs):
         # Define training and validation splits for this epoch
