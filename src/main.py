@@ -79,6 +79,8 @@ if __name__ == "__main__":
 
     image_dir = data_dir + '/hotspots-png'
 
+    print("loading images...")
+
     # Load all images into memory and apply transformations
     all_images = []
     all_labels = []
@@ -86,10 +88,13 @@ if __name__ == "__main__":
         for label, images in split.items():
             for image_name in images:
                 image_path = os.path.join(image_dir, image_name + '.png')
-                image = Image.open(image_path)
-                image = transform(image)
-                all_images.append(image)
-                all_labels.append(int(label))
+                if os.path.isfile(image_path):
+                    image = Image.open(image_path)
+                    image = transform(image)
+                    all_images.append(image)
+                    all_labels.append(int(label))
+                else:
+                    print(f'{image_path} Not Found')
 
     # Convert lists to tensors
     all_images = torch.stack(all_images)
