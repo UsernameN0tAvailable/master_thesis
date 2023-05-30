@@ -3,12 +3,32 @@ import os
 import json
 import torch
 from torch import nn
-from torch.utils.data import Subset, DataLoader, TensorDataset
+from torch.utils.data import Subset, DataLoader, TensorDataset, Dataset
 from torchvision import transforms
 from PIL import Image
 import argparse
-
 from typing import Optional;
+
+best_validation_loss = float("inf")
+ 
+class CustomImageDataset(Dataset):
+    def __init__(self, image_paths, labels, transform=None):
+        self.image_paths = image_paths
+        self.labels = labels
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        img_path = self.image_paths[idx]
+        label = self.labels[idx]
+        img = Image.open(img_path).convert('RGB')
+
+        if self.transform:
+            img = self.transform(img)
+
+        return img, label
 
 
 def get_optimizer(model, id: Optional[int]):
@@ -17,11 +37,11 @@ def get_optimizer(model, id: Optional[int]):
 
     match id:
         case 0:
-            return torch.optim.SGD(model.params(), lr=0.01)
+            return torch.optim.SGD(model.parameters(), lr=0.01)
         case 1:
-            return torch.optim.RMSprop(model.params(), lr=0.01)
+            return torch.optim.RMSprop(model.parameters(), lr=0.01)
         case 2: 
-            return torch.optim.Adam(model.params(), lr=0.01)
+            return torch.optim.Adam(model.parameters(), lr=0.01)
         case other:
             raise ValueError("optimizer value not allowed")
 
@@ -71,103 +91,92 @@ if __name__ == "__main__":
         data = json.load(f)
 
     # Define the image transformations
-    transform = transforms.Compose([
-        transforms.Resize((3600, 3600)),  # Resize to 3600x3600 pixels
-        transforms.ToTensor(),  # Convert to PyTorch tensor
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # Normalize to [-1, 1] for RGB
-        ])
 
     image_dir = data_dir + '/hotspots-png'
 
     print("loading images...")
 
     # Load all images into memory and apply transformations
-    all_images = []
+    all_images_paths = []
     all_labels = []
     for split in data.values():
         for label, images in split.items():
             for image_name in images:
                 image_path = os.path.join(image_dir, image_name + '.png')
                 if os.path.isfile(image_path):
-                    image = Image.open(image_path)
-                    image = transform(image)
-                    all_images.append(image)
+                    all_images_paths.append(image_path)
                     all_labels.append(int(label))
                 else:
                     print(f'{image_path} Not Found')
 
-    # Convert lists to tensors
-    all_images = torch.stack(all_images)
-    all_labels = torch.Tensor(all_labels)
+    transform = transforms.Compose([
+        transforms.Resize((3584, 3584)),  # vits16 requires multiples of 16 
+        transforms.ToTensor() 
+        ])
 
-    # Create a Dataset
-    dataset = TensorDataset(all_images, all_labels)
+    dataset = CustomImageDataset(all_images_paths, all_labels, transform=transform)
 
-    # Create indices for each split
-    indices = []
-    for split in data.values():
-        split_indices = []
-        for images in split.values():
-            split_indices.extend([image_name for image_name in images])
-        indices.append(split_indices)
+    # Set the indices for the train and validation sets
+    train_indices = [idx for idx in range(len(dataset)) if idx % 5 != shift]
+    validation_indices = [idx for idx in range(len(dataset)) if idx % 5 == shift]
 
-    # Number of splits
-    num_splits = len(indices)
+    # Create the DataLoaders
+    train_loader = DataLoader(Subset(dataset, train_indices), batch_size=2, shuffle=False)
+    validation_loader = DataLoader(Subset(dataset, validation_indices), batch_size=2, shuffle=False)
 
-    # Init Model Init Model
-    model = DinoFeatureClassifier()  
-
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                                                                                                      
+    # Init Model
+    model = DinoFeatureClassifier().to(device)
     # binary output true or false
     criterion = nn.BCELoss()
-
-    # stochastic gradient descent opt
+    #optimizer
     optimizer = get_optimizer(model, args.optimizer)
 
-
-    print(f'Starting ... Optimizer: {args.optimizer}, Shift: {shift}')
+    print(f'Starting ... Optimizer: {args.optimizer}, Shift: {shift}, device: {device}')
 
     # Training and validation loop
     for epoch in range(num_epochs):
-        # Define training and validation splits for this epoch
-        train_splits = indices[shift: shift + 3]
-        validation_splits = indices[shift + 3: shift + 5]
-
-        # Flatten the lists of splits
-        train_indices = [item for sublist in train_splits for item in sublist]
-        validation_indices = [item for sublist in validation_splits for item in sublist]
-
-        # Create DataLoaders for this epoch
-        train_loader = DataLoader(Subset(dataset, train_indices), batch_size=32, shuffle=True)
-        validation_loader = DataLoader(Subset(dataset, validation_indices), batch_size=32, shuffle=True)
 
         # Train
-        model.train()  # Set the model to training mode
+        model.train()  
         for images, labels in train_loader:
-            optimizer.zero_grad()  # Zero the gradients
-            outputs = model(images)  # Forward pass
-            loss = criterion(outputs, labels)  # Compute the loss
-            loss.backward()  # Compute the gradients
-            optimizer.step()  # Update the weights
+            images = images.to(device)
+            labels = labels.to(device).float().view(-1, 1)
+
+            optimizer.zero_grad() 
+            outputs = model(images) 
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
 
         # Validate
-        model.eval()  # Set the model to evaluation mode
+        model.eval() 
         validation_loss = 0
         correct = 0
         all_labels = []
         all_predictions = []
-        with torch.no_grad():  # Do not compute gradients in this block
+        with torch.no_grad():
             for images, labels in validation_loader:
-                outputs = model(images)  # Forward pass
-                loss = criterion(outputs, labels)  # Compute the loss
+                images = images.to(device)
+                labels = labels.to(device).float().view(-1, 1)
+
+                outputs = model(images)
+                loss = criterion(outputs, labels)
                 validation_loss += loss.item()
                 _, predicted = torch.max(outputs, 1)
                 correct += (predicted == labels).sum().item()
 
-                # Append the labels and predictions for F1 score computation
                 all_labels.extend(labels.tolist())
                 all_predictions.extend(predicted.tolist())
 
-        # Compute the F1 score
         f1 = f1_score(all_labels, all_predictions)
+
+        tot_validation_loss = validation_loss / len(validation_loader)
+
+        if tot_validation_loss  < best_validation_loss:
+           best_validation_loss  = tot_validation_loss
+           torch.save(model.state_dict(), f"vit_opt_{args.optimizer}_shift_{args.shift}.pth")
+
 
         print(f'Epoch {epoch + 1}, Train Loss: {loss.item()}, Validation Loss: {validation_loss / len(validation_loader)}, Validation Accuracy: {correct / len(validation_indices)}, Validation F1 Score: {f1}')
