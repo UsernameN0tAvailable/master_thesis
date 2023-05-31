@@ -121,8 +121,8 @@ if __name__ == "__main__":
     validation_indices = [idx for idx in range(len(dataset)) if idx % 5 == shift]
 
     # Create the DataLoaders
-    train_loader = DataLoader(Subset(dataset, train_indices), batch_size=2, shuffle=False)
-    validation_loader = DataLoader(Subset(dataset, validation_indices), batch_size=2, shuffle=False)
+    train_loader = DataLoader(Subset(dataset, train_indices), batch_size=1, shuffle=False)
+    validation_loader = DataLoader(Subset(dataset, validation_indices), batch_size=1, shuffle=False)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
                                                                                                       
