@@ -13,6 +13,8 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from vit import DinoFeatureClassifier
 
+logging.basicConfig(level = logging.INFO)
+
 
 class HotspotDataset(Dataset):
     def __init__(self, image_dir: str, splits: List[str], labels: List[int], crop_size: int):
@@ -21,7 +23,6 @@ class HotspotDataset(Dataset):
         self.labels = labels
         self.crop_size = crop_size
         self.transform = transforms.Compose([
-            transforms.Resize((crop_size, crop_size)),
             transforms.RandomCrop(crop_size),
             transforms.ToTensor()
         ])
@@ -63,30 +64,30 @@ def get_data(shift, data_dir, crop_size):
 
 
 def train(model, optimizer, criterion, dataloader, device):
-    model.train()
+    model.train()  # set the model to training mode
     running_loss = 0.0
-    preds = []
     true = []
+    preds = []
 
     for images, labels in dataloader:
         images = images.to(device)
         labels = labels.to(device)
 
         optimizer.zero_grad()
-        outputs = model(images)
-        outputs = outputs['y_pixel'].squeeze()
-        labels_one_hot = torch.nn.functional.one_hot(labels, num_classes=2).float()
 
-        loss = criterion(outputs, labels_one_hot)
+        outputs = model(images)['y_pixel'].squeeze()
+        loss = criterion(outputs, labels.long())
         loss.backward()
         optimizer.step()
 
         running_loss += loss.item() * images.size(0)
-        preds.extend(outputs.detach().cpu().numpy())
-        true.extend(labels.detach().cpu().numpy())
-        
+
+        _, predicted = torch.max(outputs.data, 1)
+        true.extend(labels.cpu().numpy())
+        preds.extend(predicted.cpu().numpy())
+
     epoch_loss = running_loss / len(dataloader.dataset)
-    f1 = f1_score(true, np.round(preds))
+    f1 = f1_score(true, preds)
 
     return epoch_loss, f1
 
@@ -101,6 +102,8 @@ def main():
 
     args = parser.parse_args()
 
+    logging.info("Creating Model ...")
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = DinoFeatureClassifier().to(device)
 
@@ -111,10 +114,14 @@ def main():
     elif args.optimizer_index == 2:
         optimizer = Adam(model.parameters(), lr=0.01)
 
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = nn.CrossEntropyLoss()
+
+    logging.info("Loading Data ...")
 
     dataset = get_data(args.shift, args.data_dir, args.crop_size)
     dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+    logging.info("Start Training ...")
 
     for epoch in range(args.epochs):
         epoch_loss, f1 = train(model, optimizer, criterion, dataloader, device)
