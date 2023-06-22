@@ -99,13 +99,28 @@ def main():
     parser.add_argument("--data_dir", type=str, default='data')
     parser.add_argument("--optimizer_index", type=int, default=0, choices=[0, 1, 2])
     parser.add_argument("--crop_size", type=int, default=128)
+    parser.add_argument("--models_dir", type=str, default='~/models')
 
     args = parser.parse_args()
 
     logging.info("Creating Model ...")
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = DinoFeatureClassifier().to(device)
+
+    # load model if it's already present
+    model_filename = f'model_shift{args.shift}_opt{args.optimizer_index}_crop{args.crop_size}.pth'
+    model_path = f'{args.models_dir}/{model_filename}'
+
+    if os.path.isfile(model_path):
+        logging.info(f'Loading existing model from {model_path}')
+        model = torch.load(model_path)
+    else:
+        logging.info(f'No existing model found. Creating a new one.')
+        model = DinoFeatureClassifier()
+
+    model = DinoFeatureClassifier()
+
+    model = model.to(device)
 
     if args.optimizer_index == 0:
         optimizer = SGD(model.parameters(), lr=0.01, momentum=0.9)
@@ -123,9 +138,19 @@ def main():
 
     logging.info("Start Training ...")
 
+    best_loss = float('inf')
+
     for epoch in range(args.epochs):
         epoch_loss, f1 = train(model, optimizer, criterion, dataloader, device)
         logging.info(f'Epoch: {epoch + 1}, Loss: {epoch_loss}, F1: {f1}')
+
+        if epoch_loss < best_loss:
+            best_loss = epoch_loss
+            logging.info(f'Best loss improved to {best_loss}, saving model...')
+            torch.save(model, model_path)
+            logging.info(f'Model saved to {model_path}') 
+
+    logging.info(f'Training completed. Best loss = {best_loss}')
 
 
 if __name__ == "__main__":
