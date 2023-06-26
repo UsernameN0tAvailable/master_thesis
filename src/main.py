@@ -75,15 +75,21 @@ def train(model, optimizer, criterion, dataloader, device):
         optimizer.zero_grad()
 
         outputs = model(images)['y_pixel'].squeeze()
-        loss = criterion(outputs, labels.view(-1))
-        loss.backward()
-        optimizer.step()
 
-        running_loss += loss.item() * images.size(0)
+        try:
+            loss = criterion(outputs, labels.view(-1))
 
-        _, predicted = torch.max(outputs.data, 1)
-        true.extend(labels.cpu().numpy())
-        preds.extend(predicted.cpu().numpy())
+
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item() * images.size(0)
+
+            _, predicted = torch.max(outputs.data, 1)
+            true.extend(labels.cpu().numpy())
+            preds.extend(predicted.cpu().numpy())
+        except:
+            logging.info('Error in training batch.')
 
     epoch_loss = running_loss / len(dataloader.dataset)
     f1 = f1_score(true, preds)
@@ -142,19 +148,19 @@ def main():
     logging.info("Loading Data ...")
 
     dataset = get_data(args.shift, args.data_dir, args.crop_size)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
 
     logging.info("Start Training ...")
 
-    best_loss = float('inf')
+    best_loss = float('inf') 
 
     for epoch in range(args.epochs):
         epoch_loss, f1 = train(model, optimizer, criterion, dataloader, device)
         logging.info(f'Epoch: {epoch + 1}, Loss: {epoch_loss}, F1: {f1}')
 
-        if epoch_loss < best_loss:
-            best_loss = epoch_loss
-            logging.info(f'Best loss improved to {best_loss}, saving model...')
+        if  best_loss > epoch_loss:
+            best_loss = epoch_loss 
+            logging.info(f'Best loss improved to {epoch_loss}, saving model...')
             torch.save(model, model_path)
             logging.info(f'Model saved to {model_path}') 
 
