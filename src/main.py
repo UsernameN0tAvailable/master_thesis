@@ -13,7 +13,6 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from vit import DinoFeatureClassifier
 
-logging.basicConfig(level = logging.INFO)
 
 
 class HotspotDataset(Dataset):
@@ -100,15 +99,22 @@ def main():
     parser.add_argument("--optimizer_index", type=int, default=0, choices=[0, 1, 2])
     parser.add_argument("--crop_size", type=int, default=128)
     parser.add_argument("--models_dir", type=str, default='~/models')
+    parser.add_argument("--device", type=str, default='cuda')
 
     args = parser.parse_args()
 
+    run_name = f'model_shift{args.shift}_opt{args.optimizer_index}_crop{args.crop_size}'
+
+    logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
+
     logging.info("Creating Model ...")
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if args.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+
+    logging.info(f'Using device: {device}')
 
     # load model if it's already present
-    model_filename = f'model_shift{args.shift}_opt{args.optimizer_index}_crop{args.crop_size}.pth'
+    model_filename = f'{run_name}.pth'
     model_path = f'{args.models_dir}/{model_filename}'
 
     if os.path.isfile(model_path):
