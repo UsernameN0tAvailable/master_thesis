@@ -38,14 +38,17 @@ class HotspotDataset(Dataset):
         return image, label
 
 
-def get_data(shift, data_dir, crop_size):
+def get_dataloaders(shift, data_dir, crop_size):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
         
     image_dir = os.path.join(data_dir, 'hotspots-png')
     
-    image_paths = []
-    labels = []
+    train_image_paths = []
+    train_image_labels = []
+
+    validation_image_paths = []
+    validation_image_labels = []
     
     for split in range(5):
         if (split - shift) % 5 < 3:
@@ -54,12 +57,22 @@ def get_data(shift, data_dir, crop_size):
                 for img_name in splits[str(split)][label]:
                     img_path = os.path.join(image_dir, f'{img_name}.png')
                     if os.path.exists(img_path):
-                        image_paths.append(img_name)
-                        labels.append(int(label))
+                        train_image_paths.append(img_name)
+                        train_image_labels.append(int(label))
+                    else:
+                        logging.info(f'Image {img_path} not found.')
+        else:
+            # Validation split
+            for label in ['0', '1']:
+                for img_name in splits[str(split)][label]:
+                    img_path = os.path.join(image_dir, f'{img_name}.png')
+                    if os.path.exists(img_path):
+                        validation_image_paths.append(img_name)
+                        validation_image_labels.append(int(label))
                     else:
                         logging.info(f'Image {img_path} not found.')
                         
-    return HotspotDataset(image_dir, image_paths, labels, crop_size)
+    return [HotspotDataset(image_dir, train_image_paths, train_image_labels, crop_size), HotspotDataset(image_dir, validation_image_paths, validation_image_labels, crop_size)]
 
 
 def train(model, optimizer, criterion, dataloader, device):
@@ -82,6 +95,34 @@ def train(model, optimizer, criterion, dataloader, device):
 
             loss.backward()
             optimizer.step()
+
+            running_loss += loss.item() * images.size(0)
+
+            _, predicted = torch.max(outputs.data, 1)
+            true.extend(labels.cpu().numpy())
+            preds.extend(predicted.cpu().numpy())
+        except:
+            logging.info('Error in training batch.')
+
+    epoch_loss = running_loss / len(dataloader.dataset)
+    f1 = f1_score(true, preds)
+
+    return epoch_loss, f1
+
+def validate(model, criterion, dataloader, device):
+    model.eval()  # set the model to training mode
+    running_loss = 0.0
+    true = []
+    preds = []
+
+    for images, labels in dataloader:
+        images = images.to(device)
+        labels = labels.to(device)
+
+        outputs = model(images)['y_pixel'].squeeze()
+
+        try:
+            loss = criterion(outputs, labels.view(-1))
 
             running_loss += loss.item() * images.size(0)
 
@@ -147,24 +188,27 @@ def main():
 
     logging.info("Loading Data ...")
 
-    dataset = get_data(args.shift, args.data_dir, args.crop_size)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False)
+    train_dataset, val_dataset = get_dataloaders(args.shift, args.data_dir, args.crop_size)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    
 
     logging.info("Start Training ...")
 
-    best_loss = float('inf') 
+    best_val_loss = float('inf') 
 
     for epoch in range(args.epochs):
-        epoch_loss, f1 = train(model, optimizer, criterion, dataloader, device)
-        logging.info(f'Epoch: {epoch + 1}, Loss: {epoch_loss}, F1: {f1}')
+        train_loss, train_f1 = train(model, optimizer, criterion, train_dataloader, device)
+        val_loss, val_f1 = validate(model, criterion, val_dataloader, device)
+        logging.info(f'Epoch: {epoch + 1}, Train Loss: {train_loss}, Train F1: {train_f1}, Val Loss: {val_loss}, Val F1: {val_f1}')
 
-        if  best_loss > epoch_loss:
-            best_loss = epoch_loss 
-            logging.info(f'Best loss improved to {epoch_loss}, saving model...')
+        if  best_val_loss > val_loss:
+            best_val_loss = val_loss 
+            logging.info(f'Best Val loss improved to {val_loss}, saving model...')
             torch.save(model, model_path)
             logging.info(f'Model saved to {model_path}') 
 
-    logging.info(f'Training completed. Best loss = {best_loss}')
+    logging.info(f'Training completed. Best Val loss = {best_val_loss}')
 
 
 if __name__ == "__main__":
