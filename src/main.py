@@ -75,7 +75,7 @@ def train(model, optimizer, criterion, dataloader, device):
         optimizer.zero_grad()
 
         outputs = model(images)['y_pixel'].squeeze()
-        loss = criterion(outputs, labels.long())
+        loss = criterion(outputs, labels.view(-1))
         loss.backward()
         optimizer.step()
 
@@ -97,13 +97,14 @@ def main():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--data_dir", type=str, default='data')
     parser.add_argument("--optimizer_index", type=int, default=0, choices=[0, 1, 2])
-    parser.add_argument("--crop_size", type=int, default=128)
+    parser.add_argument("--crop_size", type=lambda c: int(c) if int(c) > 0 and int(c) % 16 == 0 else argparse.ArgumentTypeError(f"{c} crop size has to be multiple of 16"))
     parser.add_argument("--models_dir", type=str, default='~/models')
-    parser.add_argument("--device", type=str, default='cuda')
+    parser.add_argument("--device", type=str, default='cuda', choices=['cuda', 'cpu'])
+    parser.add_argument("--batch_size", type=lambda x: int(x) if int(x) > 0 else argparse.ArgumentTypeError(f"{x} is an invalid batch size"))
 
     args = parser.parse_args()
 
-    run_name = f'model_shift{args.shift}_opt{args.optimizer_index}_crop{args.crop_size}'
+    run_name = f'model_shift{args.shift}_opt{args.optimizer_index}_crop{args.crop_size}_batch_size{args.batch_size}'
 
     logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
 
@@ -141,7 +142,7 @@ def main():
     logging.info("Loading Data ...")
 
     dataset = get_data(args.shift, args.data_dir, args.crop_size)
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
     logging.info("Start Training ...")
 
