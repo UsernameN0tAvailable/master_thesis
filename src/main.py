@@ -86,23 +86,18 @@ def train(model, optimizer, criterion, dataloader, device):
         labels = labels.to(device)
 
         optimizer.zero_grad()
+        outputs = model(images)['y_pixel'].squeeze(2).squeeze(2)
 
-        outputs = model(images)['y_pixel'].squeeze()
+        loss = criterion(outputs, labels.view(-1))
 
-        try:
-            loss = criterion(outputs, labels.view(-1))
+        loss.backward()
+        optimizer.step()
 
+        running_loss += loss.item() * images.size(0)
 
-            loss.backward()
-            optimizer.step()
-
-            running_loss += loss.item() * images.size(0)
-
-            _, predicted = torch.max(outputs.data, 1)
-            true.extend(labels.cpu().numpy())
-            preds.extend(predicted.cpu().numpy())
-        except:
-            logging.info('Error in training batch.')
+        _, predicted = torch.max(outputs.data, 1)
+        true.extend(labels.cpu().numpy())
+        preds.extend(predicted.cpu().numpy())
 
     epoch_loss = running_loss / len(dataloader.dataset)
     f1 = f1_score(true, preds)
@@ -119,18 +114,15 @@ def validate(model, criterion, dataloader, device):
         images = images.to(device)
         labels = labels.to(device)
 
-        outputs = model(images)['y_pixel'].squeeze()
+        outputs = model(images)['y_pixel'].squeeze(2).squeeze(2)
 
-        try:
-            loss = criterion(outputs, labels.view(-1))
+        loss = criterion(outputs, labels.view(-1))
 
-            running_loss += loss.item() * images.size(0)
+        running_loss += loss.item() * images.size(0)
 
-            _, predicted = torch.max(outputs.data, 1)
-            true.extend(labels.cpu().numpy())
-            preds.extend(predicted.cpu().numpy())
-        except:
-            logging.info('Error in training batch.')
+        _, predicted = torch.max(outputs.data, 1)
+        true.extend(labels.cpu().numpy())
+        preds.extend(predicted.cpu().numpy())
 
     epoch_loss = running_loss / len(dataloader.dataset)
     f1 = f1_score(true, preds)
