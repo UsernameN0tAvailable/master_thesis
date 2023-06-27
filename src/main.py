@@ -93,14 +93,14 @@ def train(model, optimizer, criterion, dataloader, device):
         loss.backward()
         optimizer.step()
 
-        running_loss += loss.item() * images.size(0)
+        running_loss += loss.item()
 
         _, predicted = torch.max(outputs.data, 1)
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
     epoch_loss = running_loss / len(dataloader.dataset)
-    f1 = f1_score(true, preds)
+    f1 = f1_score(true, preds, average='weighted')
 
     return epoch_loss, f1
 
@@ -118,14 +118,14 @@ def validate(model, criterion, dataloader, device):
 
         loss = criterion(outputs, labels.view(-1))
 
-        running_loss += loss.item() * images.size(0)
+        running_loss += loss.item()
 
         _, predicted = torch.max(outputs.data, 1)
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
     epoch_loss = running_loss / len(dataloader.dataset)
-    f1 = f1_score(true, preds)
+    f1 = f1_score(true, preds, average="weighted")
 
     return epoch_loss, f1
 
