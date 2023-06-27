@@ -93,7 +93,7 @@ def train(model, optimizer, criterion, dataloader, device):
         loss.backward()
         optimizer.step()
 
-        running_loss += loss.item()
+        running_loss += loss.item() * images.size(0)
 
         _, predicted = torch.max(outputs.data, 1)
         true.extend(labels.cpu().numpy())
@@ -118,7 +118,7 @@ def validate(model, criterion, dataloader, device):
 
         loss = criterion(outputs, labels.view(-1))
 
-        running_loss += loss.item()
+        running_loss += loss.item() * images.size(0)
 
         _, predicted = torch.max(outputs.data, 1)
         true.extend(labels.cpu().numpy())
