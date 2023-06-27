@@ -9,6 +9,7 @@ from sklearn.metrics import f1_score
 import torch
 from torch import nn
 from torch.optim import SGD, AdamW, Adam
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from vit import DinoFeatureClassifier
@@ -75,7 +76,7 @@ def get_dataloaders(shift, data_dir, crop_size):
     return [HotspotDataset(image_dir, train_image_paths, train_image_labels, crop_size), HotspotDataset(image_dir, validation_image_paths, validation_image_labels, crop_size)]
 
 
-def train(model, optimizer, criterion, dataloader, device):
+def train(model, optimizer, scheduler, criterion, dataloader, device):
     model.train()  # set the model to training mode
     running_loss = 0.0
     true = []
@@ -98,6 +99,8 @@ def train(model, optimizer, criterion, dataloader, device):
         _, predicted = torch.max(outputs.data, 1)
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
+
+    scheduler.step()
 
     epoch_loss = running_loss / len(dataloader.dataset)
     f1 = f1_score(true, preds, average='weighted')
@@ -176,6 +179,8 @@ def main():
     elif args.optimizer_index == 2:
         optimizer = Adam(model.parameters(), lr=0.01)
 
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+
     criterion = nn.CrossEntropyLoss()
 
     logging.info("Loading Data ...")
@@ -190,7 +195,7 @@ def main():
     best_val_loss = float('inf') 
 
     for epoch in range(args.epochs):
-        train_loss, train_f1 = train(model, optimizer, criterion, train_dataloader, device)
+        train_loss, train_f1 = train(model, optimizer, scheduler, criterion, train_dataloader, device)
         val_loss, val_f1 = validate(model, criterion, val_dataloader, device)
         logging.info(f'Epoch: {epoch + 1}, Train Loss: {train_loss}, Train F1: {train_f1}, Val Loss: {val_loss}, Val F1: {val_f1}')
 
