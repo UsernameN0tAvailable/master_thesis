@@ -147,6 +147,7 @@ def main():
     parser.add_argument("--models_dir", type=str, default='~/models')
     parser.add_argument("--device", type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument("--batch_size", type=lambda x: int(x) if int(x) > 0 else argparse.ArgumentTypeError(f"{x} is an invalid batch size"))
+parser.add_argument("--local-rank", type=int, default=0)
 
     args = parser.parse_args()
 
@@ -156,9 +157,12 @@ def main():
 
     logging.info("Creating Model ...")
 
-    device = torch.device('cuda' if args.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+	torch.distributed.init_process_group(bqackend='nccl')
+	torch.cuda.set_device(args.local_rank)
 
-    logging.info(f'Using device: {device}')
+    #device = torch.device('cuda' if args.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+
+    #logging.info(f'Using device: {device}')
 
     # load model if it's already present
     model_filename = f'{run_name}.pth'
@@ -173,8 +177,8 @@ def main():
         model = DinoFeatureClassifier()
 
     model = DinoFeatureClassifier()
-    model = DistributedDataParallel(model)
-    model = model.to(device)
+    model = model.to(args.local_rank)
+    model = DistributedDataParallel(model, device_ids=[args.local_rank])
 
     if args.optimizer_index == 0:
         optimizer = SGD(model.parameters(), lr=0.01, momentum=0.9)
