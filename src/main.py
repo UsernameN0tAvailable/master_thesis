@@ -14,6 +14,10 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from vit import DinoFeatureClassifier
 
+# distribute
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data.distributed import DistributedSampler
+
 
 
 class HotspotDataset(Dataset):
@@ -169,7 +173,7 @@ def main():
         model = DinoFeatureClassifier()
 
     model = DinoFeatureClassifier()
-
+    model = DistributedDataParallel(model)
     model = model.to(device)
 
     if args.optimizer_index == 0:
@@ -186,9 +190,8 @@ def main():
     logging.info("Loading Data ...")
 
     train_dataset, val_dataset = get_dataloaders(args.shift, args.data_dir, args.crop_size)
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False)
-    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
-    
+    train_dataloader = DataLoader(DistributedSampler(train_dataset), batch_size=args.batch_size, shuffle=False)
+    val_dataloader = DataLoader(DistributedSampler(val_dataset), batch_size=args.batch_size, shuffle=False) 
 
     logging.info("Start Training ...")
 
