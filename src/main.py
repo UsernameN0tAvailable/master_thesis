@@ -147,7 +147,7 @@ def main():
     parser.add_argument("--models_dir", type=str, default='~/models')
     parser.add_argument("--device", type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument("--batch_size", type=lambda x: int(x) if int(x) > 0 else argparse.ArgumentTypeError(f"{x} is an invalid batch size"))
-parser.add_argument("--local-rank", type=int, default=0)
+    parser.add_argument("--local-rank", type=int, default=0)
 
     args = parser.parse_args()
 
