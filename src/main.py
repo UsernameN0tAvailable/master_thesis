@@ -112,7 +112,18 @@ def train(model, optimizer, scheduler, criterion, dataloader, device, rank, devi
         running_loss /= device_count
 
     epoch_loss = running_loss.item() / len(dataloader.dataset)
-    f1 = f1_score(true, preds, average='weighted')
+
+    true_tensor = torch.tensor(true, device=device)
+    preds_tensor = torch.tensor(preds, device=device)
+
+    dist.add_gather([true_tensor, preds_tensor], [true_tensor, preds_tensor])
+
+    if rank == 0:
+        true_tensor = torch.cat(true_tensor).cpu().numpy()
+        preds_tensor = torch.cat(preds_tensor).cpu().numpy()
+        f1 = f1_score(true_tensor, preds_tensor, average='weighted')
+    else:
+        f1 = None
 
     return epoch_loss, f1
 
@@ -141,7 +152,18 @@ def validate(model, criterion, dataloader, device, rank, device_count):
         running_loss /= device_count
 
     epoch_loss = running_loss.item() / len(dataloader.dataset)
-    f1 = f1_score(true, preds, average="weighted")
+
+    true_tensor = torch.tensor(true, device=device)
+    preds_tensor = torch.tensor(preds, device=device)
+
+    dist.add_gather([true_tensor, preds_tensor], [true_tensor, preds_tensor])
+
+    if rank == 0:
+        true_tensor = torch.cat(true_tensor).cpu().numpy()
+        preds_tensor = torch.cat(preds_tensor).cpu().numpy()
+        f1 = f1_score(true_tensor, preds_tensor, average='weighted')
+    else:
+        f1 = None
 
     return epoch_loss, f1
 
