@@ -156,6 +156,7 @@ def main():
     parser.add_argument("--models_dir", type=str, default='~/models')
     parser.add_argument("--device", type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument("--batch_size", type=lambda x: int(x) if int(x) > 0 else argparse.ArgumentTypeError(f"{x} is an invalid batch size"))
+    parser.add_argument("--best_val_loss", type=float, default=float('inf'))
 
     args = parser.parse_args()
 
@@ -215,7 +216,7 @@ def main():
 
     logging.info("Start Training ...")
 
-    best_val_loss = float('inf') 
+    best_val_loss = args.best_val_loss 
 
     for epoch in range(args.epochs):
         train_loss, train_f1 = train(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
@@ -229,7 +230,7 @@ def main():
                 torch.save(model, model_path)
                 logging.info(f'Model saved to {model_path}') 
 
-        logging.info(f'Training completed. Best Val loss = {best_val_loss}')
+    logging.info(f'Training completed. Best Val loss = {best_val_loss}')
 
 
 if __name__ == "__main__":
