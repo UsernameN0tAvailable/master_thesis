@@ -83,7 +83,7 @@ def get_dataloaders(shift, data_dir, crop_size):
 
 def train(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count):
     model.train()  # set the model to training mode
-    running_loss = torch.tensor([0.0, device=device])
+    running_loss = torch.tensor(0.0, device=device)
     true = []
     preds = []
 
@@ -118,7 +118,7 @@ def train(model, optimizer, scheduler, criterion, dataloader, device, rank, devi
 
 def validate(model, criterion, dataloader, device, rank, device_count):
     model.eval()  # set the model to training mode
-    running_loss = torch.tensor([0.0, device=device])
+    running_loss = torch.tensor(0.0, device=device)
     true = []
     preds = []
 
