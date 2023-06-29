@@ -116,7 +116,7 @@ def train(model, optimizer, scheduler, criterion, dataloader, device, rank, devi
     true_tensor = torch.tensor(true, device=device)
     preds_tensor = torch.tensor(preds, device=device)
 
-    dist.add_gather([true_tensor, preds_tensor], [true_tensor, preds_tensor])
+    dist.all_gather([true_tensor, preds_tensor], [true_tensor, preds_tensor])
 
     if rank == 0:
         true_tensor = torch.cat(true_tensor).cpu().numpy()
@@ -156,7 +156,7 @@ def validate(model, criterion, dataloader, device, rank, device_count):
     true_tensor = torch.tensor(true, device=device)
     preds_tensor = torch.tensor(preds, device=device)
 
-    dist.add_gather([true_tensor, preds_tensor], [true_tensor, preds_tensor])
+    dist.all_gather([true_tensor, preds_tensor], [true_tensor, preds_tensor])
 
     if rank == 0:
         true_tensor = torch.cat(true_tensor).cpu().numpy()
