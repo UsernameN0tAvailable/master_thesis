@@ -29,8 +29,8 @@ class HotspotDataset(Dataset):
         self.transform = transforms.Compose([
             transforms.RandomCrop(crop_size),
             transforms.ToTensor()
-        ])
-        
+            ])
+
     def __len__(self):
         return len(self.splits)
 
@@ -46,15 +46,15 @@ class HotspotDataset(Dataset):
 def get_dataloaders(shift, data_dir, crop_size):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
-        
+
     image_dir = os.path.join(data_dir, 'hotspots-png')
-    
+
     train_image_paths = []
     train_image_labels = []
 
     validation_image_paths = []
     validation_image_labels = []
-    
+
     for split in range(5):
         if (split - shift) % 5 < 3:
             # Training split
@@ -76,7 +76,7 @@ def get_dataloaders(shift, data_dir, crop_size):
                         validation_image_labels.append(int(label))
                     else:
                         logging.info(f'Image {img_path} not found.')
-                        
+
     return [HotspotDataset(image_dir, train_image_paths, train_image_labels, crop_size), HotspotDataset(image_dir, validation_image_paths, validation_image_labels, crop_size)]
 
 
@@ -157,8 +157,8 @@ def main():
 
     logging.info("Creating Model ...")
 
-	torch.distributed.init_process_group(bqackend='nccl')
-	torch.cuda.set_device(args.local_rank)
+    torch.distributed.init_process_group(backend='nccl')
+    torch.cuda.set_device(args.local_rank)
 
     #device = torch.device('cuda' if args.device == 'cuda' and torch.cuda.is_available() else 'cpu')
 
@@ -217,4 +217,4 @@ def main():
 
 if __name__ == "__main__":
     main()
- 
+
