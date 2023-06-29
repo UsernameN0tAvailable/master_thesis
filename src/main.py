@@ -147,7 +147,6 @@ def main():
     parser.add_argument("--models_dir", type=str, default='~/models')
     parser.add_argument("--device", type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument("--batch_size", type=lambda x: int(x) if int(x) > 0 else argparse.ArgumentTypeError(f"{x} is an invalid batch size"))
-    parser.add_argument("--local-rank", type=int, default=0)
 
     args = parser.parse_args()
 
@@ -157,13 +156,11 @@ def main():
 
     logging.info("Creating Model ...")
 
-    torch.distributed.init_process_group(backend='nccl')
-    torch.cuda.set_device(args.local_rank)
-    print("device count: ", torch.cuda.device_count())
+#    torch.distributed.init_process_group(backend='nccl')
 
-    #device = torch.device('cuda' if args.device == 'cuda' and torch.cuda.is_available() else 'cpu')
+    device = torch.device(f'cuda:{os.environ["LOCAL_RANK"]}') if args.device == 'cuda' else torch.device('cpu')
 
-    #logging.info(f'Using device: {device}')
+    logging.info(f'Using device: {device}')
 
     # load model if it's already present
     model_filename = f'{run_name}.pth'
@@ -178,8 +175,11 @@ def main():
         model = DinoFeatureClassifier()
 
     model = DinoFeatureClassifier()
-    model = model.to(args.local_rank)
-    model = DistributedDataParallel(model, device_ids=[args.local_rank])
+    model = model.to(device)
+
+    if torch.cuda.device_count() > 1:
+        logging.info(f'running distributed on {torch.cuda.device_count()} GPUs')
+        model = DistributedDataParallel(model, device_ids=[device], output_device=device)
 
     if args.optimizer_index == 0:
         optimizer = SGD(model.parameters(), lr=0.01, momentum=0.9)
