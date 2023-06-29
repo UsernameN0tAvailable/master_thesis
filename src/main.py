@@ -156,7 +156,7 @@ def main():
 
     logging.info("Creating Model ...")
 
-#    torch.distributed.init_process_group(backend='nccl')
+    torch.distributed.init_process_group(backend='nccl', init_method='env://')
 
     device = torch.device(f'cuda:{os.environ["LOCAL_RANK"]}') if args.device == 'cuda' else torch.device('cpu')
 
