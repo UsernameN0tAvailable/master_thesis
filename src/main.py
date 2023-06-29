@@ -159,6 +159,7 @@ def main():
 
     torch.distributed.init_process_group(backend='nccl')
     torch.cuda.set_device(args.local_rank)
+    print("device count: ", torch.cuda.device_count())
 
     #device = torch.device('cuda' if args.device == 'cuda' and torch.cuda.is_available() else 'cpu')
 
