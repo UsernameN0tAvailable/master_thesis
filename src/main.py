@@ -195,8 +195,11 @@ def main():
     logging.info("Loading Data ...")
 
     train_dataset, val_dataset = get_dataloaders(args.shift, args.data_dir, args.crop_size)
-    train_dataloader = DataLoader(DistributedSampler(train_dataset), batch_size=args.batch_size, shuffle=False)
-    val_dataloader = DataLoader(DistributedSampler(val_dataset), batch_size=args.batch_size, shuffle=False) 
+    train_sampler = DistributedSampler(train_dataset, shuffle=False)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
+
+    val_sampler = DistributedSampler(val_dataset, shuffle=False)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, sampler=val_sampler)
 
     logging.info("Start Training ...")
 
