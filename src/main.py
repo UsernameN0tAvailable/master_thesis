@@ -116,12 +116,16 @@ def train(model, optimizer, scheduler, criterion, dataloader, device, rank, devi
     true_tensor = torch.tensor(true, device=device)
     preds_tensor = torch.tensor(preds, device=device)
 
-    dist.all_gather([true_tensor, preds_tensor], [true_tensor, preds_tensor])
+    gathered_true_tensors = [torch.zeros_like(true_tensor) for _ in range(device_count)]
+    gathered_preds_tensors = [torch.zeros_like(preds_tensor) for _ in range(device_count)]
+
+    dist.all_gather(gathered_true_tensors, true_tensor)
+    dist.all_gather(gathered_preds_tensors, preds_tensor)
 
     if rank == 0:
-        true_tensor = torch.cat(true_tensor).cpu().numpy()
-        preds_tensor = torch.cat(preds_tensor).cpu().numpy()
-        f1 = f1_score(true_tensor, preds_tensor, average='weighted')
+        gathered_true_tensors = torch.cat(gathered_true_tensors).cpu().numpy()
+        gathered_preds_tensor = torch.cat(gathered_preds_tensors).cpu().numpy()
+        f1 = f1_score(gathered_true_tensors, gathered_preds_tensors, average='weighted')
     else:
         f1 = None
 
@@ -156,12 +160,16 @@ def validate(model, criterion, dataloader, device, rank, device_count):
     true_tensor = torch.tensor(true, device=device)
     preds_tensor = torch.tensor(preds, device=device)
 
-    dist.all_gather([true_tensor, preds_tensor], [true_tensor, preds_tensor])
+    gathered_true_tensors = [torch.zeros_like(true_tensor) for _ in range(device_count)]
+    gathered_preds_tensors = [torch.zeros_like(preds_tensor) for _ in range(device_count)]
+
+    dist.all_gather(gathered_true_tensors, true_tensor)
+    dist.all_gather(gathered_preds_tensors, preds_tensor)
 
     if rank == 0:
-        true_tensor = torch.cat(true_tensor).cpu().numpy()
-        preds_tensor = torch.cat(preds_tensor).cpu().numpy()
-        f1 = f1_score(true_tensor, preds_tensor, average='weighted')
+        gathered_true_tensors = torch.cat(gathered_true_tensors).cpu().numpy()
+        gathered_preds_tensor = torch.cat(gathered_preds_tensors).cpu().numpy()
+        f1 = f1_score(gathered_true_tensors, gathered_preds_tensors, average='weighted')
     else:
         f1 = None
 
