@@ -17,6 +17,7 @@ from vit import DinoFeatureClassifier
 # distribute
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
 
 
 
@@ -80,7 +81,7 @@ def get_dataloaders(shift, data_dir, crop_size):
     return [HotspotDataset(image_dir, train_image_paths, train_image_labels, crop_size), HotspotDataset(image_dir, validation_image_paths, validation_image_labels, crop_size)]
 
 
-def train(model, optimizer, scheduler, criterion, dataloader, device):
+def train(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count):
     model.train()  # set the model to training mode
     running_loss = 0.0
     true = []
@@ -106,12 +107,16 @@ def train(model, optimizer, scheduler, criterion, dataloader, device):
 
     scheduler.step()
 
+    dist.reduce(running_loss, dst=0)
+    if rank == 0:
+        running_loss /= device_count
+
     epoch_loss = running_loss / len(dataloader.dataset)
     f1 = f1_score(true, preds, average='weighted')
 
     return epoch_loss, f1
 
-def validate(model, criterion, dataloader, device):
+def validate(model, criterion, dataloader, device, rank, device_count):
     model.eval()  # set the model to training mode
     running_loss = 0.0
     true = []
@@ -130,6 +135,10 @@ def validate(model, criterion, dataloader, device):
         _, predicted = torch.max(outputs.data, 1)
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
+
+    dist.reduce(running_loss, dst=0)
+    if rank == 0:
+        running_loss /= device_count
 
     epoch_loss = running_loss / len(dataloader.dataset)
     f1 = f1_score(true, preds, average="weighted")
@@ -156,9 +165,12 @@ def main():
 
     logging.info("Creating Model ...")
 
-    torch.distributed.init_process_group(backend='nccl', init_method='env://')
+    dist.init_process_group(backend='nccl', init_method='env://')
 
-    device = torch.device(f'cuda:{os.environ["LOCAL_RANK"]}') if args.device == 'cuda' else torch.device('cpu')
+    rank = int(os.environ["LOCAL_RANK"])
+    device_count = torch.cuda.device_count()
+
+    device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
 
     logging.info(f'Using device: {device}')
 
@@ -177,7 +189,7 @@ def main():
     model = DinoFeatureClassifier()
     model = model.to(device)
 
-    if torch.cuda.device_count() > 1:
+    if device_count > 1:
         logging.info(f'running distributed on {torch.cuda.device_count()} GPUs')
         model = DistributedDataParallel(model, device_ids=[device], output_device=device)
 
@@ -206,17 +218,18 @@ def main():
     best_val_loss = float('inf') 
 
     for epoch in range(args.epochs):
-        train_loss, train_f1 = train(model, optimizer, scheduler, criterion, train_dataloader, device)
-        val_loss, val_f1 = validate(model, criterion, val_dataloader, device)
-        logging.info(f'Epoch: {epoch + 1}, Train Loss: {train_loss}, Train F1: {train_f1}, Val Loss: {val_loss}, Val F1: {val_f1}')
+        train_loss, train_f1 = train(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
+        val_loss, val_f1 = validate(model, criterion, val_dataloader, device, rank, device_count)
+        if rank == 0:
+            logging.info(f'Epoch: {epoch + 1}, Train Loss: {train_loss}, Train F1: {train_f1}, Val Loss: {val_loss}, Val F1: {val_f1}')
 
-        if  best_val_loss > val_loss:
-            best_val_loss = val_loss 
-            logging.info(f'Best Val loss improved to {val_loss}, saving model...')
-            torch.save(model, model_path)
-            logging.info(f'Model saved to {model_path}') 
+            if  best_val_loss > val_loss:
+                best_val_loss = val_loss 
+                logging.info(f'Best Val loss improved to {val_loss}, saving model...')
+                torch.save(model, model_path)
+                logging.info(f'Model saved to {model_path}') 
 
-    logging.info(f'Training completed. Best Val loss = {best_val_loss}')
+        logging.info(f'Training completed. Best Val loss = {best_val_loss}')
 
 
 if __name__ == "__main__":
