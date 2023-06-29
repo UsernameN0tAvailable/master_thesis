@@ -83,7 +83,7 @@ def get_dataloaders(shift, data_dir, crop_size):
 
 def train(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count):
     model.train()  # set the model to training mode
-    running_loss = 0.0
+    running_loss = torch.tensor([0.0, device=device])
     true = []
     preds = []
 
@@ -111,14 +111,14 @@ def train(model, optimizer, scheduler, criterion, dataloader, device, rank, devi
     if rank == 0:
         running_loss /= device_count
 
-    epoch_loss = running_loss / len(dataloader.dataset)
+    epoch_loss = running_loss.item() / len(dataloader.dataset)
     f1 = f1_score(true, preds, average='weighted')
 
     return epoch_loss, f1
 
 def validate(model, criterion, dataloader, device, rank, device_count):
     model.eval()  # set the model to training mode
-    running_loss = 0.0
+    running_loss = torch.tensor([0.0, device=device])
     true = []
     preds = []
 
@@ -140,7 +140,7 @@ def validate(model, criterion, dataloader, device, rank, device_count):
     if rank == 0:
         running_loss /= device_count
 
-    epoch_loss = running_loss / len(dataloader.dataset)
+    epoch_loss = running_loss.item() / len(dataloader.dataset)
     f1 = f1_score(true, preds, average="weighted")
 
     return epoch_loss, f1
