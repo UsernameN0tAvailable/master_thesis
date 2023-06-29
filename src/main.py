@@ -123,9 +123,10 @@ def train(model, optimizer, scheduler, criterion, dataloader, device, rank, devi
     dist.all_gather(gathered_preds_tensors, preds_tensor)
 
     if rank == 0:
-        gathered_true_tensors = torch.cat(gathered_true_tensors).cpu().numpy()
-        gathered_preds_tensor = torch.cat(gathered_preds_tensors).cpu().numpy()
-        f1 = f1_score(gathered_true_tensors, gathered_preds_tensors, average='weighted')
+        gathered_trues = torch.cat(gathered_true_tensors).cpu().numpy()
+        gathered_preds = torch.cat(gathered_preds_tensors).cpu().numpy()
+        print(gathered_preds.shape, gathered_trues.shape)
+        f1 = f1_score(gathered_trues, gathered_preds, average='weighted')
     else:
         f1 = None
 
@@ -167,9 +168,9 @@ def validate(model, criterion, dataloader, device, rank, device_count):
     dist.all_gather(gathered_preds_tensors, preds_tensor)
 
     if rank == 0:
-        gathered_true_tensors = torch.cat(gathered_true_tensors).cpu().numpy()
-        gathered_preds_tensor = torch.cat(gathered_preds_tensors).cpu().numpy()
-        f1 = f1_score(gathered_true_tensors, gathered_preds_tensors, average='weighted')
+        gathered_trues = torch.cat(gathered_true_tensors).cpu().numpy()
+        gathered_preds = torch.cat(gathered_preds_tensors).cpu().numpy()
+        f1 = f1_score(gathered_trues, gathered_preds, average='weighted')
     else:
         f1 = None
 
