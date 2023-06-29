@@ -125,7 +125,6 @@ def train(model, optimizer, scheduler, criterion, dataloader, device, rank, devi
     if rank == 0:
         gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
         gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
-        print(gathered_preds.shape, gathered_trues.shape)
         f1 = f1_score(gathered_trues, gathered_preds, average='weighted')
     else:
         f1 = None
