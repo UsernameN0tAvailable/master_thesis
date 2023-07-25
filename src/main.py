@@ -321,13 +321,7 @@ def main():
                     {"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1,
                      "val_loss": val_loss, "val_prec": val_precision, "val_recall": val_recall, "val_f1": val_f1
                      })
-            logging.info(f'
-                         Epoch: {epoch + 1}\n
-                         Train:\n
-                         Loss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\n
-                         Validation:\n
-                         Loss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}'
-                         )
+            logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
 
             if  best_val_loss > val_loss:
                 best_val_loss = val_loss 
@@ -344,11 +338,7 @@ def main():
     test_loss, test_precision, test_recall, test_f1 = validate(model, criterion, test_dataloader, device, rank, device_count)
     if rank == 0:
         wandb.finish()
-        logging.info(f'
-                     Training completed. Best Val loss = {best_val_loss}\n
-                     Test:\n
-                     Loss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f11}'
-                     )
+        logging.info(f'Training completed. Best Val loss = {best_val_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f11}')
 
 
 if __name__ == "__main__":
