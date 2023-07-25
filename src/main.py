@@ -18,19 +18,21 @@ from vit import DinoFeatureClassifier
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
-
+import wandb
 
 
 class HotspotDataset(Dataset):
-    def __init__(self, image_dir: str, splits: List[str], labels: List[int], crop_size: int):
+    def __init__(self, image_dir: str, splits: List[str], labels: List[int], transform):
         self.image_dir = image_dir
         self.splits = splits
         self.labels = labels
-        self.crop_size = crop_size
+        self.transform = transform
+        """
         self.transform = transforms.Compose([
             transforms.RandomCrop(crop_size),
             transforms.ToTensor()
             ])
+        """
 
     def __len__(self):
         return len(self.splits)
@@ -56,9 +58,13 @@ def get_dataloaders(shift, data_dir, crop_size):
     validation_image_paths = []
     validation_image_labels = []
 
+    test_image_paths = []
+    test_image_labels = []
+
     for split in range(5):
-        if (split - shift) % 5 < 3:
-            # Training split
+        split_index = (split- shift) % 5
+
+        if split_index < 3: # Training split
             for label in ['0', '1']:
                 for img_name in splits[str(split)][label]:
                     img_path = os.path.join(image_dir, f'{img_name}.png')
@@ -67,8 +73,7 @@ def get_dataloaders(shift, data_dir, crop_size):
                         train_image_labels.append(int(label))
                     else:
                         logging.info(f'Image {img_path} not found.')
-        else:
-            # Validation split
+        else if split_index == 3: # Validation Split
             for label in ['0', '1']:
                 for img_name in splits[str(split)][label]:
                     img_path = os.path.join(image_dir, f'{img_name}.png')
@@ -77,8 +82,46 @@ def get_dataloaders(shift, data_dir, crop_size):
                         validation_image_labels.append(int(label))
                     else:
                         logging.info(f'Image {img_path} not found.')
+        else: 
+            for label in ['0', '1']:
+                for img_name in splits[str(split)][label]:
+                    img_path = os.path.join(image_dir, f'{img_name}.png')
+                    if os.path.exists(img_path):
+                        test_image_paths.append(img_name)
+                        test_image_labels.append(int(label))
+                    else:
+                        logging.info(f'Image {img_path} not found.')
 
-    return [HotspotDataset(image_dir, train_image_paths, train_image_labels, crop_size), HotspotDataset(image_dir, validation_image_paths, validation_image_labels, crop_size)]
+
+    return [
+            HotspotDataset(
+                image_dir,
+                train_image_paths,
+                train_image_labels,
+                transform = transforms.Compose([
+                    transforms.RandomCrop(crop_size),
+                    transforms.ToTensor()
+                ])
+                ), 
+            HotspotDataset(
+                image_dir, 
+                validation_image_paths, 
+                validation_image_labels, 
+                transform = transforms.Compose([
+                    transforms.CenterCrop(crop_size),
+                    transforms.ToTensor()
+                ])
+                ),
+            HotspotDataset(
+                image_dir, 
+                test_image_paths, 
+                test_image_labels, 
+                transform = transforms.Compose([
+                    transforms.CenterCrop(crop_size),
+                    transforms.ToTensor()
+                ])
+                ),
+            ]
 
 
 def train(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count):
@@ -105,7 +148,8 @@ def train(model, optimizer, scheduler, criterion, dataloader, device, rank, devi
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
-    scheduler.step()
+    if scheduler is not None:
+        scheduler.step()
 
     dist.reduce(running_loss, dst=0)
     if rank == 0:
@@ -182,15 +226,17 @@ def main():
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--data_dir", type=str, default='data')
     parser.add_argument("--optimizer_index", type=int, default=0, choices=[0, 1, 2])
+    parser.add_argument("--scheduler", type=int, choices=[0, 1])
     parser.add_argument("--crop_size", type=lambda c: int(c) if int(c) > 0 and int(c) % 16 == 0 else argparse.ArgumentTypeError(f"{c} crop size has to be multiple of 16"))
     parser.add_argument("--models_dir", type=str, default='~/models')
     parser.add_argument("--device", type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument("--batch_size", type=lambda x: int(x) if int(x) > 0 else argparse.ArgumentTypeError(f"{x} is an invalid batch size"))
     parser.add_argument("--best_val_loss", type=float, default=float('inf'))
+    parser.add_argument("--lr", type=float, default=0.001)
 
     args = parser.parse_args()
 
-    run_name = f'model_shift{args.shift}_opt{args.optimizer_index}_crop{args.crop_size}_batch_size{args.batch_size}'
+    run_name = f'model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}'
 
     logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
 
@@ -225,19 +271,19 @@ def main():
         model = DistributedDataParallel(model, device_ids=[device], output_device=device)
 
     if args.optimizer_index == 0:
-        optimizer = SGD(model.parameters(), lr=0.01, momentum=0.9)
+        optimizer = SGD(model.parameters(), lr=args.lr, momentum=0.9)
     elif args.optimizer_index == 1:
-        optimizer = AdamW(model.parameters(), lr=0.01)
+        optimizer = AdamW(model.parameters(), lr=args.lr)
     elif args.optimizer_index == 2:
-        optimizer = Adam(model.parameters(), lr=0.01)
+        optimizer = Adam(model.parameters(), lr=args.lr)
 
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) if args.scheduler == 1 else None
 
     criterion = nn.CrossEntropyLoss()
 
     logging.info("Loading Data ...")
 
-    train_dataset, val_dataset = get_dataloaders(args.shift, args.data_dir, args.crop_size)
+    train_dataset, val_dataset, test_dataset = get_dataloaders(args.shift, args.data_dir, args.crop_size)
     train_sampler = DistributedSampler(train_dataset, shuffle=False)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
 
@@ -260,7 +306,9 @@ def main():
                 torch.save(model, model_path)
                 logging.info(f'Model saved to {model_path}') 
 
-    logging.info(f'Training completed. Best Val loss = {best_val_loss}')
+    test_loss, test_f1 = validate(model, criterion, test_dataloader, device, rank, device_count)
+    if rank == 0:
+        logging.info(f'Training completed. Best Val loss = {best_val_loss}\nTest Loss: {test_loss}, Test F1: {test_f1}')
 
 
 if __name__ == "__main__":
