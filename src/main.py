@@ -325,10 +325,7 @@ def main():
         train_loss, train_precision, train_recall, train_f1 = train(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
         val_loss, val_precision, val_recall, val_f1 = validate(model, criterion, val_dataloader, device, rank, device_count)
         if rank == 0:
-            wandb.log(
-                    {"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1,
-                     "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1] "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]
-                     })
+            wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
 
             if  best_val_loss > val_loss:
