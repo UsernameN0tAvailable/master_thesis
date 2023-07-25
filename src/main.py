@@ -215,7 +215,7 @@ def validate(model, criterion, dataloader, device, rank, device_count):
     if rank == 0:
         gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
         gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
-        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=None)
+        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=None, zero_division=1)
     else:
         recall = None
         precision = None
@@ -243,15 +243,16 @@ def main():
     run_name = f'model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}'
 
 
-    logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
-
-    logging.info("Creating Model ...")
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
     rank = int(os.environ["LOCAL_RANK"])
 
     if rank == 0:
+
+    logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
+    logging.info("Creating Model ...")
+
         wandb.init(
                 project=run_name,
 
@@ -266,7 +267,8 @@ def main():
 
     device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
 
-    logging.info(f'Using device: {device}')
+    if rand == 0:
+        logging.info(f'Using device: {device}')
 
     # load model if it's already present
     model_filename = f'{run_name}.pth'
@@ -284,7 +286,8 @@ def main():
     model = model.to(device)
 
     if device_count > 1:
-        logging.info(f'running distributed on {torch.cuda.device_count()} GPUs')
+        if rank == 0:
+            logging.info(f'running distributed on {torch.cuda.device_count()} GPUs')
         model = DistributedDataParallel(model, device_ids=[device], output_device=device)
 
     if args.optimizer_index == 0:
@@ -298,7 +301,8 @@ def main():
 
     criterion = nn.CrossEntropyLoss()
 
-    logging.info("Loading Data ...")
+    if rank == 0:
+        logging.info("Loading Data ...")
 
     train_dataset, val_dataset, test_dataset = get_dataloaders(args.shift, args.data_dir, args.crop_size)
 
@@ -311,7 +315,8 @@ def main():
     test_sampler = DistributedSampler(test_dataset, shuffle=False)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, sampler=test_sampler)
 
-    logging.info("Start Training ...")
+    if rank == 0:
+        logging.info("Start Training ...")
 
     best_val_loss = args.best_val_loss 
     no_loss_improvement = 0
