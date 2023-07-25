@@ -250,8 +250,8 @@ def main():
 
     if rank == 0:
 
-    logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
-    logging.info("Creating Model ...")
+        logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
+        logging.info("Creating Model ...")
 
         wandb.init(
                 project=run_name,
