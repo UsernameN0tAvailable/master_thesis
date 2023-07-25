@@ -73,7 +73,7 @@ def get_dataloaders(shift, data_dir, crop_size):
                         train_image_labels.append(int(label))
                     else:
                         logging.info(f'Image {img_path} not found.')
-        else if split_index == 3: # Validation Split
+        elif split_index == 3: # Validation Split
             for label in ['0', '1']:
                 for img_name in splits[str(split)][label]:
                     img_path = os.path.join(image_dir, f'{img_name}.png')
