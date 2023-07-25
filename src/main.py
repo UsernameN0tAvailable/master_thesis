@@ -5,7 +5,7 @@ import argparse
 from typing import List
 import numpy as np
 from PIL import Image
-from sklearn.metrics import f1_score
+from sklearn.metrics import precision_recall_fscore_support
 import torch
 from torch import nn
 from torch.optim import SGD, AdamW, Adam
@@ -169,11 +169,13 @@ def train(model, optimizer, scheduler, criterion, dataloader, device, rank, devi
     if rank == 0:
         gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
         gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
-        f1 = f1_score(gathered_trues, gathered_preds, average='weighted')
+        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average='weighted')
     else:
+        recall = None
+        precision = None
         f1 = None
 
-    return epoch_loss, f1
+    return epoch_loss, precision, recall, f1
 
 def validate(model, criterion, dataloader, device, rank, device_count):
     model.eval()  # set the model to training mode
@@ -213,11 +215,13 @@ def validate(model, criterion, dataloader, device, rank, device_count):
     if rank == 0:
         gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
         gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
-        f1 = f1_score(gathered_trues, gathered_preds, average='weighted')
+        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average='weighted')
     else:
+        recall = None
+        precision = None
         f1 = None
 
-    return epoch_loss, f1
+    return epoch_loss, precision, recall, f1 
 
 
 def main():
@@ -284,21 +288,31 @@ def main():
     logging.info("Loading Data ...")
 
     train_dataset, val_dataset, test_dataset = get_dataloaders(args.shift, args.data_dir, args.crop_size)
+
     train_sampler = DistributedSampler(train_dataset, shuffle=False)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
 
     val_sampler = DistributedSampler(val_dataset, shuffle=False)
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, sampler=val_sampler)
 
+    test_sampler = DistributedSampler(test_dataset, shuffle=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, sampler=test_sampler)
+
     logging.info("Start Training ...")
 
     best_val_loss = args.best_val_loss 
 
     for epoch in range(args.epochs):
-        train_loss, train_f1 = train(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
-        val_loss, val_f1 = validate(model, criterion, val_dataloader, device, rank, device_count)
+        train_loss, train_precision, train_recall, train_f1 = train(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
+        val_loss, val_precision, val_recall, val_f1 = validate(model, criterion, val_dataloader, device, rank, device_count)
         if rank == 0:
-            logging.info(f'Epoch: {epoch + 1}, Train Loss: {train_loss}, Train F1: {train_f1}, Val Loss: {val_loss}, Val F1: {val_f1}')
+            logging.info(f'
+                         Epoch: {epoch + 1}\n
+                         Train:\n
+                         Loss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\n
+                         Validation:\n
+                         Loss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}'
+                         )
 
             if  best_val_loss > val_loss:
                 best_val_loss = val_loss 
@@ -306,9 +320,13 @@ def main():
                 torch.save(model, model_path)
                 logging.info(f'Model saved to {model_path}') 
 
-    test_loss, test_f1 = validate(model, criterion, test_dataloader, device, rank, device_count)
+    test_loss, test_precision, test_recall, test_f1 = validate(model, criterion, test_dataloader, device, rank, device_count)
     if rank == 0:
-        logging.info(f'Training completed. Best Val loss = {best_val_loss}\nTest Loss: {test_loss}, Test F1: {test_f1}')
+        logging.info(f'
+                     Training completed. Best Val loss = {best_val_loss}\n
+                     Test:\n
+                     Loss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f11}'
+                     )
 
 
 if __name__ == "__main__":
