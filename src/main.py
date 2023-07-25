@@ -321,6 +321,8 @@ def main():
     best_val_loss = args.best_val_loss 
     no_loss_improvement = 0
 
+    flag_tensor = torch.zeros(1).to(device)
+
     for epoch in range(args.epochs):
         train_loss, train_precision, train_recall, train_f1 = train(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
         val_loss, val_precision, val_recall, val_f1 = validate(model, criterion, val_dataloader, device, rank, device_count)
@@ -336,9 +338,15 @@ def main():
                 logging.info(f'Model saved to {model_path}') 
             else:
                 no_loss_improvement += 1
-                if no_loss_improvement >= 10:
-                    logging.info("No Val Loss improvement for 10 Epoch, exiting training")
-                    break;
+                if no_loss_improvement >= 40:
+                    logging.info("No Val Loss improvement for 40 Epoch, exiting training")
+                    flag_tensor += 1
+
+        dist.all_reduce(flag_tensor)
+
+        if flag_tensor == 1:
+            break;
+
 
     test_loss, test_precision, test_recall, test_f1 = validate(model, criterion, test_dataloader, device, rank, device_count)
     if rank == 0:
