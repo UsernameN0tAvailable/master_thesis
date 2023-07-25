@@ -267,7 +267,7 @@ def main():
 
     device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
 
-    if rand == 0:
+    if rank == 0:
         logging.info(f'Using device: {device}')
 
     # load model if it's already present
