@@ -242,6 +242,16 @@ def main():
 
     run_name = f'model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}'
 
+    wandb.init(
+            project=run_name,
+
+            config= {
+                "learning_rate": args.lr,
+                "architecture": "ViT",
+                "dataset": "Tumor Budding Hotspots",
+                }
+            )
+
     logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
 
     logging.info("Creating Model ...")
@@ -301,11 +311,16 @@ def main():
     logging.info("Start Training ...")
 
     best_val_loss = args.best_val_loss 
+    no_loss_improvement = 0
 
     for epoch in range(args.epochs):
         train_loss, train_precision, train_recall, train_f1 = train(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
         val_loss, val_precision, val_recall, val_f1 = validate(model, criterion, val_dataloader, device, rank, device_count)
         if rank == 0:
+            wandb.log(
+                    {"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1,
+                     "val_loss": val_loss, "val_prec": val_precision, "val_recall": val_recall, "val_f1": val_f1
+                     })
             logging.info(f'
                          Epoch: {epoch + 1}\n
                          Train:\n
@@ -316,12 +331,19 @@ def main():
 
             if  best_val_loss > val_loss:
                 best_val_loss = val_loss 
+                no_loss_improvement = 0
                 logging.info(f'Best Val loss improved to {val_loss}, saving model...')
                 torch.save(model, model_path)
                 logging.info(f'Model saved to {model_path}') 
+            else:
+                no_loss_improvement += 1
+                if no_loss_improvement >= 10:
+                    logging.info("No Val Loss improvement for 10 Epoch, exiting training")
+                    break;
 
     test_loss, test_precision, test_recall, test_f1 = validate(model, criterion, test_dataloader, device, rank, device_count)
     if rank == 0:
+        wandb.finish()
         logging.info(f'
                      Training completed. Best Val loss = {best_val_loss}\n
                      Test:\n
