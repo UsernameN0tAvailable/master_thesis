@@ -215,7 +215,7 @@ def validate(model, criterion, dataloader, device, rank, device_count):
     if rank == 0:
         gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
         gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
-        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average='weighted')
+        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=None)
     else:
         recall = None
         precision = None
@@ -242,15 +242,6 @@ def main():
 
     run_name = f'model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}'
 
-    wandb.init(
-            project=run_name,
-
-            config= {
-                "learning_rate": args.lr,
-                "architecture": "ViT",
-                "dataset": "Tumor Budding Hotspots",
-                }
-            )
 
     logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
 
@@ -259,6 +250,18 @@ def main():
     dist.init_process_group(backend='nccl', init_method='env://')
 
     rank = int(os.environ["LOCAL_RANK"])
+
+    if rank == 0:
+        wandb.init(
+                project=run_name,
+
+                config= {
+                    "learning_rate": args.lr,
+                    "architecture": "ViT",
+                    "dataset": "Tumor Budding Hotspots",
+                    }
+                )
+
     device_count = torch.cuda.device_count()
 
     device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
@@ -319,7 +322,7 @@ def main():
         if rank == 0:
             wandb.log(
                     {"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1,
-                     "val_loss": val_loss, "val_prec": val_precision, "val_recall": val_recall, "val_f1": val_f1
+                     "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1] "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]
                      })
             logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
 
