@@ -169,7 +169,7 @@ def train(model, optimizer, scheduler, criterion, dataloader, device, rank, devi
     if rank == 0:
         gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
         gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
-        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average='weighted')
+        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average='weighted', zero_division=0.0)
     else:
         recall = None
         precision = None
@@ -215,7 +215,7 @@ def validate(model, criterion, dataloader, device, rank, device_count):
     if rank == 0:
         gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
         gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
-        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=None, zero_division=1)
+        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=None, zero_division=0.0)
     else:
         recall = None
         precision = None
