@@ -57,7 +57,6 @@ class PathsAndLabels():
                     logging.info(f'Image {img_path} not found.')
 
     def get_dataset(self, transform) -> HotspotDataset:
-        logging.info(f'sizes: {len(self.paths)} {len(self.labels)}')
         HotspotDataset(self.data_dir, self.paths, self.labels, transform)
 
 def get_dataloaders(shift, data_dir, crop_size):
@@ -92,7 +91,7 @@ def get_dataloaders(shift, data_dir, crop_size):
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor()
                     ])),
-                train_data.get_dataset(transforms.Compose([
+                test_data.get_dataset(transforms.Compose([
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor()
                     ])),
