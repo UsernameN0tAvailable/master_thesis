@@ -19,7 +19,7 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 import wandb
 
-from utils import PathsAndLabels, HotspotDataset, get_dataloaders
+from pipeline_utils import PathsAndLabels, HotspotDataset, get_dataloaders
 
 
 def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average):
