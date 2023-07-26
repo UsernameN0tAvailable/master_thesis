@@ -88,13 +88,15 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
                     transforms.RandomCrop(crop_size),
                     transforms.ToTensor()
                     ])), 
-                validation_data.get_dataset(transforms.Compose([
+                validation_data.get_dataset(
                     batch_size,
+                    transforms.Compose([
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor()
                     ])),
-                test_data.get_dataset(transforms.Compose([
+                test_data.get_dataset(
                     batch_size,
+                    transforms.Compose([
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor()
                     ])),
