@@ -45,7 +45,7 @@ class PathsAndLabels():
         self.labels = []
         self.data_dir = data_dir
 
-    def append(self, split: Dict[str, List[str]]):
+    def push(self, split: Dict[str, List[str]]):
 
         for label in ['0', '1']:
             for img_name in split[label]:
@@ -57,6 +57,7 @@ class PathsAndLabels():
                     logging.info(f'Image {img_path} not found.')
 
     def get_dataset(self, transform) -> HotspotDataset:
+        logging.info(f'sizes: {len(self.paths)} {len(self.labels)}')
         HotspotDataset(self.data_dir, self.paths, self.labels, transform)
 
 def get_dataloaders(shift, data_dir, crop_size):
@@ -75,11 +76,11 @@ def get_dataloaders(shift, data_dir, crop_size):
         split = splits[str(split_n)]
 
         if split_index < 3: # Training split
-            train_data.append(split)
+            train_data.push(split)
         elif split_index == 3: # Validation Split
-            validation_data.append(split)
+            validation_data.push(split)
         else: 
-            test_data.append(split)
+            test_data.push(split)
 
     return [
             train_data.get_dataset(
