@@ -152,12 +152,14 @@ def main():
 
     train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size)
 
+    weights = torch.tensor(class_weights).to(device)
+
     if rank == 0:
         logging.info(f'Class weights {class_weights}')
 
     class_weights.to(device)
 
-    criterion = nn.CrossEntropyLoss(class_weights, label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1)
 
     if rank == 0:
         logging.info("Start Training ...")

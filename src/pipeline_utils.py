@@ -54,8 +54,7 @@ class PathsAndLabels():
         positive_count = 0
         for l in self.labels:
             positive_count += l
-        weights = [ positive_count / labels_length, (labels_length - positive_count) / labels_length]
-        return torch.tensor(weights)
+        return [ positive_count / labels_length, (labels_length - positive_count) / labels_length]
 
 def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
