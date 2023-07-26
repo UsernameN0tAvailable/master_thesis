@@ -318,6 +318,7 @@ def main():
         logging.info("Loading Data ...")
 
     train_dataset, val_dataset, test_dataset, weights = get_dataloaders(args.shift, args.data_dir, args.crop_size)
+    weights.to(device)
 
     train_sampler = DistributedSampler(train_dataset, shuffle=False)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
