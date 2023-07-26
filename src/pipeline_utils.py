@@ -58,7 +58,7 @@ class PathsAndLabels():
                     logging.info(f'Image {img_path} not found.')
 
     def get_dataset(self, transform) -> HotspotDataset:
-        HotspotDataset(self.image_dir, self.paths, self.labels, transform)
+        HotspotDataset(self.data_dir, self.paths, self.labels, transform)
 
 def get_dataloaders(shift, data_dir, crop_size):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
