@@ -7,6 +7,8 @@ import os
 import logging
 import json
 
+from torch.utils.data.distributed import DistributedSampler
+
 class HotspotDataset(Dataset):
     def __init__(self, image_dir: str, splits: List[str], labels: List[int], transform):
         self.image_dir = image_dir
@@ -42,8 +44,10 @@ class PathsAndLabels():
                 else:
                     logging.info(f'Image {img_path} not found.')
 
-    def get_dataset(self, transform) -> HotspotDataset:
-        HotspotDataset(self.data_dir, self.paths, self.labels, transform)
+    def get_dataset(self, batch_size: int, transform) -> DataLoader:
+        dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
+        sampler = DistributedSampler(dataset, shuffle=False)
+        dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
 
     def get_class_weights(self):
         labels_length = len(self.labels)
@@ -53,7 +57,7 @@ class PathsAndLabels():
         weights = [ positive_count / labels_length, (labels_length - positive_count) / labels_length]
         return torch.tensor(weights)
 
-def get_dataloaders(shift, data_dir, crop_size):
+def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
 
@@ -79,15 +83,18 @@ def get_dataloaders(shift, data_dir, crop_size):
 
     return [
             train_data.get_dataset(
+                batch_size,
                 transforms.Compose([
                     transforms.RandomCrop(crop_size),
                     transforms.ToTensor()
                     ])), 
                 validation_data.get_dataset(transforms.Compose([
+                    batch_size,
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor()
                     ])),
                 test_data.get_dataset(transforms.Compose([
+                    batch_size,
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor()
                     ])),

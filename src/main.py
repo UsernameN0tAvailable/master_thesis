@@ -150,17 +150,7 @@ def main():
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataset, val_dataset, test_dataset, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size)
-
-
-    train_sampler = DistributedSampler(train_dataset, shuffle=False)
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
-
-    val_sampler = DistributedSampler(val_dataset, shuffle=False)
-    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, sampler=val_sampler)
-
-    test_sampler = DistributedSampler(test_dataset, shuffle=False)
-    test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, sampler=test_sampler)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size)
 
     if rank == 0:
         logging.info(f'Class weights {class_weights}')
@@ -177,7 +167,7 @@ def main():
 
     for epoch in range(args.epochs):
         model.train()
-        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average="weighted")
+        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, average="weighted")
         model.eval()
         val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
         if rank == 0:
