@@ -61,12 +61,23 @@ def get_dataloaders(shift, data_dir, crop_size):
     test_image_paths = []
     test_image_labels = []
 
+    positive_training_labels = 0
+    tot_training_labels = 0
+
     for split in range(5):
         split_index = (split- shift) % 5
 
         if split_index < 3: # Training split
             for label in ['0', '1']:
-                for img_name in splits[str(split)][label]:
+
+                img_names = splits[str(split)][label]
+
+                if label == '1':
+                    positive_training_labels += len(img_names)
+
+                tot_training_labels += len(img_names)
+
+                for img_name in img_names:
                     img_path = os.path.join(image_dir, f'{img_name}.png')
                     if os.path.exists(img_path):
                         train_image_paths.append(img_name)
@@ -91,6 +102,8 @@ def get_dataloaders(shift, data_dir, crop_size):
                         test_image_labels.append(int(label))
                     else:
                         logging.info(f'Image {img_path} not found.')
+
+    weights = [positive_training_labels / tot_training_labels, (tot_training_labels - positive_training_labels)/ tot_training_labels]
 
 
     return [
@@ -121,6 +134,7 @@ def get_dataloaders(shift, data_dir, crop_size):
                     transforms.ToTensor()
                 ])
                 ),
+            torch.tensor(weights)
             ]
 
 
@@ -254,8 +268,8 @@ def main():
         logging.info("Creating Model ...")
 
         wandb.init(
-                project=run_name,
-
+                project="ViT",
+                group=run_name,
                 config= {
                     "learning_rate": args.lr,
                     "architecture": "ViT",
@@ -299,12 +313,11 @@ def main():
 
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) if args.scheduler == 1 else None
 
-    criterion = nn.CrossEntropyLoss()
 
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataset, val_dataset, test_dataset = get_dataloaders(args.shift, args.data_dir, args.crop_size)
+    train_dataset, val_dataset, test_dataset, weights = get_dataloaders(args.shift, args.data_dir, args.crop_size)
 
     train_sampler = DistributedSampler(train_dataset, shuffle=False)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
@@ -314,6 +327,8 @@ def main():
 
     test_sampler = DistributedSampler(test_dataset, shuffle=False)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, sampler=test_sampler)
+
+    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1)
 
     if rank == 0:
         logging.info("Start Training ...")
