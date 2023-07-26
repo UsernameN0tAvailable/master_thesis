@@ -157,8 +157,6 @@ def main():
     if rank == 0:
         logging.info(f'Class weights {class_weights}')
 
-    class_weights.to(device)
-
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1)
 
     if rank == 0:
