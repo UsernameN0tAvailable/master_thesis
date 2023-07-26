@@ -13,6 +13,7 @@ class HotspotDataset(Dataset):
         self.splits = splits
         self.labels = labels
         self.transform = transform
+        logging.info(f'{self.image_dir} {len(self.splits)} {len(self.labels)}')
 
     def __len__(self):
         return len(self.splits)
