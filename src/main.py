@@ -150,7 +150,7 @@ def main():
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataset, val_dataset, test_dataset = get_dataloaders(args.shift, args.data_dir, args.crop_size)
+    train_dataset, val_dataset, test_dataset, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size)
 
 
     train_sampler = DistributedSampler(train_dataset, shuffle=False)
@@ -161,8 +161,6 @@ def main():
 
     test_sampler = DistributedSampler(test_dataset, shuffle=False)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, sampler=test_sampler)
-
-    class_weights = train_dataset.get_class_weights()
 
     if rank == 0:
         logging.info(f'Class weights {class_weights}')

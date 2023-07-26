@@ -13,24 +13,9 @@ class HotspotDataset(Dataset):
         self.splits = splits
         self.labels = labels
         self.transform = transform
-        logging.info(f'{self.image_dir} {len(self.splits)} {len(self.labels)}')
 
     def __len__(self):
         return len(self.splits)
-
-    def get_class_weights(self):
-
-        labels_length = len(self.labels)
-
-        positive_count = 0
-
-        for l in self.labels:
-            positive_count += l
-
-        weights = [(labels_length - positive_count) / labels_length, positive_count / labels_length]
-
-        return torch.tensor(weights)
-
 
     def __getitem__(self, idx):
         img_name = self.splits[idx]
@@ -60,6 +45,14 @@ class PathsAndLabels():
     def get_dataset(self, transform) -> HotspotDataset:
         HotspotDataset(self.data_dir, self.paths, self.labels, transform)
 
+    def get_class_weights(self):
+        labels_length = len(self.labels)
+        positive_count = 0
+        for l in self.labels:
+            positive_count += l
+        weights = [ positive_count / labels_length, (labels_length - positive_count) / labels_length]
+        return torch.tensor(weights)
+
 def get_dataloaders(shift, data_dir, crop_size):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
@@ -82,6 +75,8 @@ def get_dataloaders(shift, data_dir, crop_size):
         else: 
             test_data.push(split)
 
+    weights = train_data.get_class_weights()
+
     return [
             train_data.get_dataset(
                 transforms.Compose([
@@ -96,6 +91,7 @@ def get_dataloaders(shift, data_dir, crop_size):
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor()
                     ])),
+                weights
                 ]
 
 
