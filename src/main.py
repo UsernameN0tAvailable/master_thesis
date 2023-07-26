@@ -162,7 +162,12 @@ def main():
     test_sampler = DistributedSampler(test_dataset, shuffle=False)
     test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, sampler=test_sampler)
 
-    criterion = nn.CrossEntropyLoss(train_dataset.get_class_weights(), label_smoothing=0.1)
+    class_weights = train_dataset.get_class_weights()
+
+    if rank == 0:
+        logging.info(f'Class weights {class_weights}')
+
+    criterion = nn.CrossEntropyLoss(class_weights, label_smoothing=0.1)
 
     if rank == 0:
         logging.info("Start Training ...")
