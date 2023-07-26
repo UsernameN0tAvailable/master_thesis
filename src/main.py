@@ -101,7 +101,7 @@ def main():
         logging.info("Creating Model ...")
 
         wandb.init(
-                project=ViT,
+                project="ViT",
                 group=run_name,
                 config= {
                     "learning_rate": args.lr,
