@@ -22,7 +22,7 @@ import wandb
 from utils import PathsAndLabels, HotspotDataset, get_dataloaders
 
 
-def step(model, optimizer=None, scheduler=None, criterion, dataloader, device, rank, device_count, average='weighted'):
+def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average):
     running_loss = torch.tensor(0.0, device=device)
     true = []
     preds = []
