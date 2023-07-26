@@ -47,7 +47,7 @@ class PathsAndLabels():
     def get_dataset(self, batch_size: int, transform) -> DataLoader:
         dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
         sampler = DistributedSampler(dataset, shuffle=False)
-        dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+        return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
 
     def get_class_weights(self):
         labels_length = len(self.labels)
