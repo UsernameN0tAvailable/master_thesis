@@ -134,7 +134,7 @@ def get_dataloaders(shift, data_dir, crop_size):
                     transforms.ToTensor()
                 ])
                 ),
-            torch.tensor(weights)
+            weights
             ]
 
 
@@ -317,8 +317,8 @@ def main():
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataset, val_dataset, test_dataset, weights = get_dataloaders(args.shift, args.data_dir, args.crop_size)
-    weights.to(device)
+    train_dataset, val_dataset, test_dataset, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size)
+    weights = torch.tensor(class_weights).to(device)
 
     train_sampler = DistributedSampler(train_dataset, shuffle=False)
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, sampler=train_sampler)
