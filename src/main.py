@@ -150,7 +150,7 @@ def main():
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size)
 
     if rank == 0:
         logging.info(f'Class weights {class_weights}')
