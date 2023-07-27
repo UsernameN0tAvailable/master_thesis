@@ -78,7 +78,7 @@ class PathsAndLabels():
         new_paths = []
 
         for n in range(missing_positives):
-            random_positive_index = int(random.uniform(0, 1) * (labels_length - 1))
+            random_positive_index = int(random.uniform(0, 1) * (len(positive_indexes) - 1))
             random_positive_original_index = positive_indexes[random_positive_index]
             new_labels.append(self.labels[random_positive_original_index])
             new_paths.append(self.paths[random_positive_original_index])
