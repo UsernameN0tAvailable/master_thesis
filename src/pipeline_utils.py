@@ -6,6 +6,7 @@ from PIL import Image
 import os
 import logging
 import json
+import random
 
 from torch.utils.data.distributed import DistributedSampler
 
@@ -56,6 +57,38 @@ class PathsAndLabels():
             positive_count += l
         return [ positive_count / labels_length, (labels_length - positive_count) / labels_length]
 
+    def oversample(self):
+
+        labels_length = len(self.labels)
+
+        positive_count = 0
+        positive_indexes = []
+
+        for i in enumerate(self.labels): 
+            value = self.labels[i]
+            positive_count += value 
+
+            if value == 1:
+                positive_indexes.append(i)
+
+
+        negative_count = labels_length - positive_count
+        missing_positives = negative_count - positive_count 
+
+        new_labels = []
+        new_paths = []
+
+        for n in range(missing_positives):
+            random_positive_index = int(random.uniform(0, 1) * (labels_length - 1))
+            random_positive_original_index = positive_indexes[random_positive_index]
+            new_labels.append(self.labels[random_positive_original_index])
+            new_paths.append(self.paths[random_positive_original_index])
+
+        self.labels = self.labels + new_labels
+        self.paths = self.paths + new_paths
+
+
+
 def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
@@ -79,6 +112,7 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
             test_data.push(split)
 
     weights = train_data.get_class_weights()
+    train_data.oversample()
 
     return [
             train_data.get_dataset(
