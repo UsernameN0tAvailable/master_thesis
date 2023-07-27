@@ -77,6 +77,9 @@ class PathsAndLabels():
         new_labels = []
         new_paths = []
 
+        # re seed so every GPU gets same sequence
+        random.seed(1.0)
+
         for n in range(missing_positives):
             random_positive_index = int(random.uniform(0, 1) * (len(positive_indexes) - 1))
             random_positive_original_index = positive_indexes[random_positive_index]
