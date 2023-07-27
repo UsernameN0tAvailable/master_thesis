@@ -64,8 +64,7 @@ class PathsAndLabels():
         positive_count = 0
         positive_indexes = []
 
-        for i in enumerate(self.labels): 
-            value = self.labels[i]
+        for i, value in enumerate(self.labels): 
             positive_count += value 
 
             if value == 1:
