@@ -55,40 +55,10 @@ class PathsAndLabels():
         positive_count = 0
         for l in self.labels:
             positive_count += l
-        return [ positive_count / labels_length, (labels_length - positive_count) / labels_length]
 
-    def oversample(self):
+        negative_weight = (positive_count / labels_length) / 4.0
 
-        labels_length = len(self.labels)
-
-        positive_count = 0
-        positive_indexes = []
-
-        for i, value in enumerate(self.labels): 
-            positive_count += value 
-
-            if value == 1:
-                positive_indexes.append(i)
-
-
-        negative_count = labels_length - positive_count
-        missing_positives = negative_count - positive_count 
-
-        new_labels = []
-        new_paths = []
-
-        # re seed so every GPU gets same sequence
-        random.seed(1.0)
-
-        for n in range(missing_positives):
-            random_positive_index = int(random.uniform(0, 1) * (len(positive_indexes) - 1))
-            random_positive_original_index = positive_indexes[random_positive_index]
-            new_labels.append(self.labels[random_positive_original_index])
-            new_paths.append(self.paths[random_positive_original_index])
-
-        self.labels = self.labels + new_labels
-        self.paths = self.paths + new_paths
-
+        return [ positive_count / labels_length, 1 - negative_weight]
 
 
 def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
@@ -114,7 +84,6 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
             test_data.push(split)
 
     weights = train_data.get_class_weights()
-    train_data.oversample()
 
     return [
             train_data.get_dataset(
