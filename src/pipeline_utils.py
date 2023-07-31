@@ -46,7 +46,7 @@ class PathsAndLabels():
     def get_weights(self):
         if self.label_distribution[0] == 0 and self.label_distribution[1] == 0:
             return [0.5, 0.5]
-        else
+        else:
             tot_unique_samples = self.label_distribution[0] + self.label_distribution[1]
             return [self.label_distribution[1] / tot_unique_samples, self.label_distribution[0] / tot_unique_samples]
 
