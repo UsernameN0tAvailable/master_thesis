@@ -157,7 +157,7 @@ def main():
     if rank == 0:
         logging.info(f'Class weights {class_weights}')
 
-    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss(weight=weights)
 
     if rank == 0:
         logging.info("Start Training ...")
