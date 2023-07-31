@@ -97,7 +97,7 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
         split = splits[str(split_n)]
 
         if split_index < 3: # Training split
-            train_data.push(split)
+            train_data.push(split, True)
         elif split_index == 3: # Validation Split
             validation_data.push(split)
         else: 
