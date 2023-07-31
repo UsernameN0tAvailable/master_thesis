@@ -105,7 +105,7 @@ def main():
         logging.info("Creating Model ...")
 
         wandb.init(
-                project="ViT Oversampling Decision Threshold",
+                project="ViT Oversampling Decision Threshold New",
                 group=run_name,
                 config= {
                     "learning_rate": args.lr,
