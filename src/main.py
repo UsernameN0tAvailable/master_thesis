@@ -43,7 +43,11 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
 
         running_loss += loss.item() * images.size(0)
 
-        _, predicted = torch.max(output.data, 1)
+        softmax_output = torch.nn.functional.softmax(output.data, dim=1)
+        predicted = (softmax_output[;, 1] > 0.3).long()
+
+
+        #_, predicted = torch.max(output.data, 1)
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
