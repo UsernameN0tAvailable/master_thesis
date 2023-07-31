@@ -36,10 +36,10 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         output = model(images)['y_pixel'].squeeze(2).squeeze(2)
 
         probabilities = torch.nn.functional.softmax(output)
-        new_threshold = 0.3
+        new_threshold = 0.2
         predictions = (probabilities[:, 1] > new_threshold).float()
 
-        loss = criterion(outputs, predictions.view(-1))
+        loss = criterion(predictions, labels.view(-1))
 
         if optimizer is not None:
             loss.backward()
