@@ -35,11 +35,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         if optimizer is not None: optimizer.zero_grad()
         output = model(images)['y_pixel'].squeeze(2).squeeze(2)
 
-        probabilities = torch.nn.functional.softmax(output, dim=1)
-        new_threshold = 0.2
-        predictions = (probabilities[:, 1] > new_threshold).float()
-
-        loss = criterion(predictions, labels.view(-1))
+        loss = criterion(output, labels.view(-1))
 
         if optimizer is not None:
             loss.backward()
@@ -47,7 +43,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
 
         running_loss += loss.item() * images.size(0)
 
-        _, predicted = torch.max(predictions.data, 1)
+        _, predicted = torch.max(output.data, 1)
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
