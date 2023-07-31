@@ -35,7 +35,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         if optimizer is not None: optimizer.zero_grad()
         output = model(images)['y_pixel'].squeeze(2).squeeze(2)
 
-        probabilities = torch.nn.functional.softmax(output)
+        probabilities = torch.nn.functional.softmax(output, dim=output.size()[1])
         new_threshold = 0.2
         predictions = (probabilities[:, 1] > new_threshold).float()
 
