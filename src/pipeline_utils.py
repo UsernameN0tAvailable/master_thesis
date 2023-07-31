@@ -44,8 +44,11 @@ class PathsAndLabels():
             logging.info(f'Image {img_path} not found.')
 
     def get_weights(self):
-        tot_unique_samples = self.label_distribution[0] + self.label_distribution[1]
-        return [self.label_distribution[1] / tot_unique_samples, self.label_distribution[0] / tot_unique_samples]
+        if self.label_distribution[0] == 0 and self.label_distribution[1] == 0:
+            return [0.5, 0.5]
+        else
+            tot_unique_samples = self.label_distribution[0] + self.label_distribution[1]
+            return [self.label_distribution[1] / tot_unique_samples, self.label_distribution[0] / tot_unique_samples]
 
 
     def push(self, split: Dict[str, List[str]], oversample=False):
@@ -94,7 +97,7 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
         split = splits[str(split_n)]
 
         if split_index < 3: # Training split
-            train_data.push(split, True)
+            train_data.push(split)
         elif split_index == 3: # Validation Split
             validation_data.push(split)
         else: 

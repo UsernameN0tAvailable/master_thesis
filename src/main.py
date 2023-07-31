@@ -33,9 +33,13 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
 
 
         if optimizer is not None: optimizer.zero_grad()
-        outputs = model(images)['y_pixel'].squeeze(2).squeeze(2)
+        output = model(images)['y_pixel'].squeeze(2).squeeze(2)
 
-        loss = criterion(outputs, labels.view(-1))
+        probabilities = torch.nn.functional.softmax(output)
+        new_threshold = 0.3
+        predictions = (probabilities[:, 1] > new_threshold).float()
+
+        loss = criterion(outputs, predictions.view(-1))
 
         if optimizer is not None:
             loss.backward()
@@ -43,7 +47,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
 
         running_loss += loss.item() * images.size(0)
 
-        _, predicted = torch.max(outputs.data, 1)
+        _, predicted = torch.max(predictions.data, 1)
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
@@ -101,7 +105,7 @@ def main():
         logging.info("Creating Model ...")
 
         wandb.init(
-                project="ViT Oversampling New",
+                project="ViT Oversampling Decision Threshold",
                 group=run_name,
                 config= {
                     "learning_rate": args.lr,
