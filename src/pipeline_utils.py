@@ -68,6 +68,7 @@ class PathsAndLabels():
             # over sampling
             for n_i in range(neg_l):
                 pos_i = n_i % pos_l
+                logging.info(f'copy pos: {pos_i}, path: {positives[pos_i]}')
                 self.add_sample(positives[pos_i], '1')
 
  
@@ -75,6 +76,9 @@ class PathsAndLabels():
             for label in ['0', '1']:
                 for img_name in split[label]:
                     self.add_sample(img_name, label)
+
+    def __len__(self):
+        len(self.paths)
 
     def get_dataset(self, batch_size: int, transform) -> DataLoader:
         dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
@@ -102,6 +106,8 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
             validation_data.push(split)
         else: 
             test_data.push(split)
+
+    logging.info(f'train: {len(train_data)}, val: {len(validation_data)}, test: {len(test_data)}')
 
     weights = train_data.get_weights()
 
