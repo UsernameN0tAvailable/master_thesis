@@ -78,7 +78,7 @@ class PathsAndLabels():
                     self.add_sample(img_name, label)
 
     def __len__(self):
-        len(self.paths)
+        return len(self.paths)
 
     def get_dataset(self, batch_size: int, transform) -> DataLoader:
         dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
