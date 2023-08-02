@@ -23,7 +23,7 @@ class DinoFeature(nn.Module):
     def __init__(
             self,
             dino_arch: str = "vits16",
-            freeze: str = 'backbone.head',
+            freeze: str = None,
     ):
         super().__init__()
 
@@ -87,7 +87,7 @@ class DinoFeatureClassifier(DinoFeature):
             dino_arch: str = "vits16",
             n_cls: int = 2,
             dropout: float = 0.1,
-            freeze: str = 'backbone.head',
+            freeze: str = None,
             type_cls: str = 'nonlinear',
     ):
         super(DinoFeatureClassifier, self).__init__(
