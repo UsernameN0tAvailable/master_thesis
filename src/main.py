@@ -43,11 +43,11 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
 
         running_loss += loss.item() * images.size(0)
 
-        softmax_output = torch.nn.functional.softmax(output.data, dim=1)
-        predicted = (softmax_output[:, 1] > 0.4).long()
+        
+        #softmax_output = torch.nn.functional.softmax(output.data, dim=1)
+        #predicted = (softmax_output[:, 1] > 0.4).long()
 
-
-        #_, predicted = torch.max(output.data, 1)
+        _, predicted = torch.max(output.data, 1)
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
@@ -105,7 +105,7 @@ def main():
         logging.info("Creating Model ...")
 
         wandb.init(
-                project="ViT Oversampling Decision Threshold New Debug",
+                project="ViT Oversampling No Decision Threshold",
                 group=run_name,
                 config= {
                     "learning_rate": args.lr,
