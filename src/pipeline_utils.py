@@ -45,11 +45,10 @@ class PathsAndLabels():
 
     def get_weights(self):
         if self.label_distribution[0] == 0 and self.label_distribution[1] == 0:
-            return [0.5, 0.5]
+            raise ValueError("Class Frequencies not counted!")
         else:
             tot_unique_samples = self.label_distribution[0] + self.label_distribution[1]
-            return [self.label_distribution[1] / tot_unique_samples, self.label_distribution[0] / tot_unique_samples]
-
+            return torch.from_numpy(1 / (np.array(self.label_distribution) * 2))
 
     def push(self, split: Dict[str, List[str]], oversample=False):
 
@@ -68,7 +67,6 @@ class PathsAndLabels():
             # over sampling
             for n_i in range(neg_l):
                 pos_i = n_i % pos_l
-                logging.info(f'copy pos: {pos_i}, path: {positives[pos_i]}')
                 self.add_sample(positives[pos_i], '1')
 
  
@@ -107,7 +105,7 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
         else: 
             test_data.push(split)
 
-    logging.info(f'train: {len(train_data)}, val: {len(validation_data)}, test: {len(test_data)}')
+    logging.info(f'SAMPLES COUNT:\ntrain: {len(train_data)}, val: {len(validation_data)}, test: {len(test_data)}')
 
     weights = train_data.get_weights()
 
