@@ -156,7 +156,7 @@ def main():
 
     train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size)
 
-    weights = torch.from_numpy(class_weights).to(device)
+    weights = torch.from_numpy(class_weights).float().to(device)
 
     if rank == 0:
         logging.info(f'Class weights {class_weights}')
