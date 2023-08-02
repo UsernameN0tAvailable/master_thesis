@@ -22,7 +22,7 @@ import wandb
 from pipeline_utils import PathsAndLabels, HotspotDataset, get_dataloaders
 
 
-def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average, threshold=0.5):
+def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, threshold, average="weighted"):
     running_loss = torch.tensor(0.0, device=device)
     true = []
     preds = []
@@ -45,7 +45,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
 
         
         softmax_output = torch.nn.functional.softmax(output.data, dim=1)
-        predicted = (softmax_output[:, 1] > args.t).long()
+        predicted = (softmax_output[:, 1] > threshold).long()
 
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
@@ -173,9 +173,9 @@ def main():
 
     for epoch in range(args.epochs):
         model.train()
-        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, average="weighted", args.t)
+        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, args.t)
         model.eval()
-        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None, args.t)
+        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, args.t, average=None)
         if rank == 0:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
