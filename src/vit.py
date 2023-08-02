@@ -23,7 +23,7 @@ class DinoFeature(nn.Module):
     def __init__(
             self,
             dino_arch: str = "vits16",
-            freeze: str = None,
+            freeze: str = 'backbone.head',
     ):
         super().__init__()
 
@@ -40,11 +40,9 @@ class DinoFeature(nn.Module):
         named_modules = np.array([n for n, _ in self.named_modules()])
 
         # No freezing option, freeze none
-        if freeze is None or freeze not in named_modules:
-            logging.info("No Freeze")
+        if freeze not in named_modules:
             return
         else:
-            logging.info(f'Freeze up to layer: {freeze}')
             # Freeze up to layer (not included)
             id_layer = np.nonzero(named_modules == freeze)[0][0]
             frozen_layers = named_modules[:id_layer]
@@ -87,7 +85,7 @@ class DinoFeatureClassifier(DinoFeature):
             dino_arch: str = "vits16",
             n_cls: int = 2,
             dropout: float = 0.1,
-            freeze: str = None,
+            freeze: str = 'backbone.head',
             type_cls: str = 'nonlinear',
     ):
         super(DinoFeatureClassifier, self).__init__(
