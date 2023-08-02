@@ -7,6 +7,7 @@ import os
 import logging
 import json
 import random
+import numpy as np
 
 from torch.utils.data.distributed import DistributedSampler
 
