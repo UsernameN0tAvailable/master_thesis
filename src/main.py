@@ -103,7 +103,7 @@ def main():
         logging.info("Creating Model ...")
 
         wandb.init(
-                project="ViT Oversampling + New Weights",
+                project="ViT Oversampling + New Weights + Augmentations",
                 group=run_name,
                 config= {
                     "learning_rate": args.lr,

@@ -115,7 +115,11 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
                 batch_size,
                 transforms.Compose([
                     transforms.RandomCrop(crop_size),
-                    transforms.ToTensor()
+                    transforms.RandomRotation([0, 90, 180, 270]),
+                    transforms.ColorJitter(brightness=0.2),
+                    RandomNoise(std=0.05),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ])), 
                 validation_data.get_dataset(
                     batch_size,
@@ -133,3 +137,11 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
                 ]
 
 
+class RandomNoise:
+    def __init__(self, mean=0., std=0.1):
+        self.std = std
+        self.mean = mean
+
+    def __call__(self, tensor):
+        noise = torch.randn_like(tensor) * self.std + self.mean
+        return tensor + noise
