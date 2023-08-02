@@ -43,10 +43,8 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
 
         running_loss += loss.item() * images.size(0)
 
+        predicted = (torch.nn.functional.softmax(output.data, dim=1)[;, 1] > threshold).long() if threshold != 0.5 else torch.max(output.data, 1)[1]
         
-        softmax_output = torch.nn.functional.softmax(output.data, dim=1)
-        predicted = (softmax_output[:, 1] > threshold).long()
-
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
