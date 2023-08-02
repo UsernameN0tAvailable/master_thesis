@@ -117,8 +117,8 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
                     transforms.RandomCrop(crop_size),
                     Random90Rotation(),
                     transforms.ColorJitter(brightness=0.2),
-                    RandomNoise(std=0.05),
                     transforms.ToTensor(),
+                    RandomNoise(std=0.05),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ])), 
                 validation_data.get_dataset(
