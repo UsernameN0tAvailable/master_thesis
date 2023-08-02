@@ -49,7 +49,7 @@ class PathsAndLabels():
             raise ValueError("Class Frequencies not counted!")
         else:
             tot_unique_samples = self.label_distribution[0] + self.label_distribution[1]
-            return torch.from_numpy(1 / (np.array(self.label_distribution) * 2))
+            return 1 / (np.array(self.label_distribution) * 2)
 
     def push(self, split: Dict[str, List[str]], oversample=False):
 
