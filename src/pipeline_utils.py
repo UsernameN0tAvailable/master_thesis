@@ -115,7 +115,7 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
                 batch_size,
                 transforms.Compose([
                     transforms.RandomCrop(crop_size),
-                    transforms.RandomRotation([0, 90, 180, 270]),
+                    Random90Rotation(),
                     transforms.ColorJitter(brightness=0.2),
                     RandomNoise(std=0.05),
                     transforms.ToTensor(),
@@ -145,3 +145,8 @@ class RandomNoise:
     def __call__(self, tensor):
         noise = torch.randn_like(tensor) * self.std + self.mean
         return tensor + noise
+
+class Random90Rotation:
+    def __call__(self, img):
+        angle = random.choice([0, 90, 180, 270])
+        return transforms.functional.rotate(img, angle)
