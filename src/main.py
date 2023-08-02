@@ -88,10 +88,11 @@ def main():
     parser.add_argument("--best_val_loss", type=float, default=float('inf'))
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--t", type=float, default=0.5)
+    parser.add_argument("--freeze", type=int, choices=[0,1], default=0)
 
     args = parser.parse_args()
 
-    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}'
+    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}_freeze_{args.freeze}'
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
@@ -103,7 +104,7 @@ def main():
         logging.info("Creating Model ...")
 
         wandb.init(
-                project="ViT Oversampling + New Weights + Augmentations",
+                project="ViT Oversampling + New Weights + Augmentations + Unfreeze",
                 group=run_name,
                 config= {
                     "learning_rate": args.lr,
@@ -125,7 +126,7 @@ def main():
 
     if os.path.isfile(model_path):
         logging.info(f'Loading existing model from {model_path}')
-        _ = DinoFeatureClassifier()
+        _ = DinoFeatureClassifier(freeze=None if args.freeze == 0 else 'backbone.head')
         model = torch.load(model_path)
     else:
         logging.info(f'No existing model found. Creating a new one.')

@@ -4,6 +4,7 @@ import numpy as np
 from torch.nn.functional import normalize
 from typing import Optional
 import re
+import logging
 
 def make_nonlinear_clusterer(in_channels: int, out_channels: int, bias: Optional[bool] = False):
     return torch.nn.Sequential(
@@ -39,9 +40,11 @@ class DinoFeature(nn.Module):
         named_modules = np.array([n for n, _ in self.named_modules()])
 
         # No freezing option, freeze none
-        if freeze not in named_modules:
+        if freeze is None or freeze not in named_modules:
+            logging.info("No Freeze")
             return
         else:
+            logging.info(f'Freeze up to layer: {freeze}')
             # Freeze up to layer (not included)
             id_layer = np.nonzero(named_modules == freeze)[0][0]
             frozen_layers = named_modules[:id_layer]
