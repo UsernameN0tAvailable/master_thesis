@@ -22,7 +22,7 @@ import wandb
 from pipeline_utils import PathsAndLabels, HotspotDataset, get_dataloaders
 
 
-def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average):
+def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average, threshold=0.5):
     running_loss = torch.tensor(0.0, device=device)
     true = []
     preds = []
@@ -44,10 +44,9 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         running_loss += loss.item() * images.size(0)
 
         
-        #softmax_output = torch.nn.functional.softmax(output.data, dim=1)
-        #predicted = (softmax_output[:, 1] > 0.4).long()
+        softmax_output = torch.nn.functional.softmax(output.data, dim=1)
+        predicted = (softmax_output[:, 1] > args.t).long()
 
-        _, predicted = torch.max(output.data, 1)
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
@@ -90,10 +89,11 @@ def main():
     parser.add_argument("--batch_size", type=lambda x: int(x) if int(x) > 0 else argparse.ArgumentTypeError(f"{x} is an invalid batch size"))
     parser.add_argument("--best_val_loss", type=float, default=float('inf'))
     parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--t", type=float, default=0.5)
 
     args = parser.parse_args()
 
-    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}'
+    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}'
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
@@ -142,7 +142,7 @@ def main():
         model = DistributedDataParallel(model, device_ids=[device], output_device=device)
 
     if args.optimizer_index == 0:
-        optimizer = SGD(model.parameters(), lr=args.lr, momentum=0.9)
+        optimizer = SGD(model.parameters(), lr=args.lr, momentum=0.2)
     elif args.optimizer_index == 1:
         optimizer = AdamW(model.parameters(), lr=args.lr)
     elif args.optimizer_index == 2:
@@ -173,9 +173,9 @@ def main():
 
     for epoch in range(args.epochs):
         model.train()
-        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, average="weighted")
+        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, average="weighted", args.t)
         model.eval()
-        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
+        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None, args.t)
         if rank == 0:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
