@@ -89,10 +89,11 @@ def main():
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--t", type=float, default=0.5)
     parser.add_argument("--oversample", type=float, required=False)
+    parser.add_argument("--augmentation", type=int, default=1)
 
     args = parser.parse_args()
 
-    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}_s_{args.oversample}'
+    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}_s_{args.oversample}_a_{args.augmentation}'
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
@@ -104,7 +105,7 @@ def main():
         logging.info("Creating Model ...")
 
         wandb.init(
-                project="ViT _ _",
+                project=f'ViT {args.crop_size}',
                 group=run_name,
                 config= {
                     "learning_rate": args.lr,
@@ -153,7 +154,7 @@ def main():
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample, True if args.augmentation == 1 else False)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
