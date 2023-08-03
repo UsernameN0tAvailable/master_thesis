@@ -53,7 +53,7 @@ class PathsAndLabels():
 
     def push(self, split: Dict[str, List[str]], oversample: Optional[float]):
 
-        if oversample not None:
+        if oversample is not None:
             negatives = split['0']
             positives = split['1']
             neg_l = len(negatives)
