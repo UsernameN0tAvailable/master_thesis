@@ -1,6 +1,6 @@
 from torch.utils.data import Dataset, DataLoader
 import torch
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 from torchvision import transforms
 from PIL import Image
 import os
@@ -51,9 +51,9 @@ class PathsAndLabels():
             tot_unique_samples = self.label_distribution[0] + self.label_distribution[1]
             return 1 / (np.array(self.label_distribution, dtype=float) * 2)
 
-    def push(self, split: Dict[str, List[str]], oversample=False):
+    def push(self, split: Dict[str, List[str]], oversample: Optional[float]):
 
-        if oversample:
+        if oversample not None:
             negatives = split['0']
             positives = split['1']
             neg_l = len(negatives)
@@ -65,16 +65,19 @@ class PathsAndLabels():
             for img_name in negatives:
                 self.add_sample(img_name, '0')
 
-            oversample_l = ((neg_l / 6) * 10 - neg_l)
+
+
+            oversample_l = ((neg_l / (( 1.0 - oversample) * 10) ) * 10 - neg_l)
 
             # over sampling
-            for n_i in range(oversample_l):
+            for n_i in range(int(oversample_l)):
                 pos_i = n_i % pos_l
                 self.add_sample(positives[pos_i], '1')
 
  
         else:
             for label in ['0', '1']:
+                self.label_distribution[int(label)] += len(split[label])
                 for img_name in split[label]:
                     self.add_sample(img_name, label)
 
@@ -86,7 +89,7 @@ class PathsAndLabels():
         sampler = DistributedSampler(dataset, shuffle=False)
         return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
 
-def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
+def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, oversample: Optional[float]):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
 
@@ -102,7 +105,7 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int):
         split = splits[str(split_n)]
 
         if split_index < 3: # Training split
-            train_data.push(split, True)
+            train_data.push(split, oversample)
         elif split_index == 3: # Validation Split
             validation_data.push(split)
         else: 

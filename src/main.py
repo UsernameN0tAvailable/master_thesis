@@ -88,10 +88,11 @@ def main():
     parser.add_argument("--best_val_loss", type=float, default=float('inf'))
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--t", type=float, default=0.5)
+    parser.add_argument("--oversample", type=float, required=False)
 
     args = parser.parse_args()
 
-    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}'
+    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}_s_{args.oversample}'
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
@@ -103,7 +104,7 @@ def main():
         logging.info("Creating Model ...")
 
         wandb.init(
-                project="ViT Oversampling + New Weights + Augmentations + Final",
+                project="ViT _ _",
                 group=run_name,
                 config= {
                     "learning_rate": args.lr,
@@ -152,7 +153,7 @@ def main():
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
