@@ -65,8 +65,10 @@ class PathsAndLabels():
             for img_name in negatives:
                 self.add_sample(img_name, '0')
 
+            oversample_l = ((neg_l / 6) * 10 - neg_l)
+
             # over sampling
-            for n_i in range(neg_l):
+            for n_i in range(oversample_l):
                 pos_i = n_i % pos_l
                 self.add_sample(positives[pos_i], '1')
 
