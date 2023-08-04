@@ -86,6 +86,7 @@ def main():
     parser.add_argument("--device", type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument("--batch_size", type=lambda x: int(x) if int(x) > 0 else argparse.ArgumentTypeError(f"{x} is an invalid batch size"))
     parser.add_argument("--best_val_loss", type=float, default=float('inf'))
+    parser.add_argument("--best_f1", type=float, default=0.0)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--t", type=float, default=0.5)
     parser.add_argument("--oversample", type=float, required=False)
@@ -105,7 +106,7 @@ def main():
         logging.info("Creating Model ...")
 
         wandb.init(
-                project=f'ViT {args.crop_size}',
+                project=f'ViT {args.crop_size} New',
                 group=run_name,
                 config= {
                     "learning_rate": args.lr,
@@ -167,7 +168,9 @@ def main():
         logging.info("Start Training ...")
 
     best_val_loss = args.best_val_loss 
-    no_loss_improvement = 0
+    best_f1 = args.best_f1
+
+    no_improvement = 0
 
     flag_tensor = torch.zeros(1).to(device)
 
@@ -180,15 +183,20 @@ def main():
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
 
-            if  best_val_loss > val_loss:
-                best_val_loss = val_loss 
-                no_loss_improvement = 0
-                logging.info(f'Best Val loss improved to {val_loss}, saving model...')
+            average_f1 = (val_f1[0] + val_f1[1]) / 2
+
+            if  best_val_loss > val_loss || average_f1 > best_f1: 
+
+                best_val_loss = val_loss if best_val_loss > val_loss else best_val_loss
+                best_f1 = average_f1 if average_f1 > best_f1 else best_f1
+
+                no_improvement = 0
+                logging.info(f'Saving model')
                 torch.save(model, model_path)
                 logging.info(f'Model saved to {model_path}') 
             else:
-                no_loss_improvement += 1
-                if no_loss_improvement >= 40:
+                no_improvement += 1
+                if no_improvement >= 40:
                     logging.info("No Val Loss improvement for 40 Epoch, exiting training")
                     flag_tensor += 1
 
