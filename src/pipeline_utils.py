@@ -115,7 +115,7 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, 
 
     weights = train_data.get_weights()
 
-    train_augmentations = transforms.Compose([transforms.RandomCrop(crop_size),Random90Rotation(), transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip(), transforms.ColorJitter(brightness=0.2),transforms.ToTensor(),RandomNoise(std=0.05), transforms.GaussianBlur(5, sigma=(0.1, 2.0)), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]) if augmentations else transforms.Compose([transforms.RandomCrop(crop_size)])
+    train_augmentations = transforms.Compose([transforms.RandomCrop(crop_size),Random90Rotation(), transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip(), transforms.ColorJitter(brightness=0.2),transforms.ToTensor(),RandomNoise(std=0.05), transforms.GaussianBlur(5, sigma=(0.1, 2.0)), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]) if augmentations else transforms.Compose([transforms.RandomCrop(crop_size), transforms.ToTensor()])
 
     return [
             train_data.get_dataset(
