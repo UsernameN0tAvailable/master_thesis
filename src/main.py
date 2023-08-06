@@ -197,7 +197,7 @@ def main():
             else:
                 no_improvement += 1
                 if no_improvement >= 40:
-                    logging.info("No Val Loss improvement for 40 Epoch, exiting training")
+                    logging.info("No Loss And F1 improvement for 40 Epoch, exiting training")
                     flag_tensor += 1
 
         dist.all_reduce(flag_tensor)
@@ -207,7 +207,7 @@ def main():
 
     # test values
     model.eval() 
-    test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count)
+    test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
     if rank == 0:
         wandb.finish()
         logging.info(f'Training completed. Best Val loss = {best_val_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f11}')
