@@ -9,6 +9,8 @@ import json
 import random
 import numpy as np
 
+import random
+
 from torch.utils.data.distributed import DistributedSampler
 
 class HotspotDataset(Dataset):
@@ -54,6 +56,9 @@ class PathsAndLabels():
     def push(self, split: Dict[str, List[str]], oversample: Optional[float] = None):
 
         if oversample is not None:
+
+            random.seed(3.0)
+
             negatives = split['0']
             positives = split['1']
             neg_l = len(negatives)
@@ -71,7 +76,7 @@ class PathsAndLabels():
 
             # over sampling
             for n_i in range(int(oversample_l)):
-                pos_i = n_i % pos_l
+                pos_i = int(random.uniform(0.0, float(pos_l - 1)))
                 self.add_sample(positives[pos_i], '1')
 
  
