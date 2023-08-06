@@ -1,7 +1,7 @@
 import os
 import logging
 import argparse
-from typing import List
+from typing import List, Optional
 import numpy as np
 from PIL import Image
 from sklearn.metrics import precision_recall_fscore_support
@@ -22,7 +22,7 @@ import wandb
 from pipeline_utils import PathsAndLabels, HotspotDataset, get_dataloaders
 
 
-def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, threshold, average="weighted"):
+def step(model, optimizer, scheduler, criterion, dataloader, device, threshold, average: Optional[str] ="weighted"):
     running_loss = torch.tensor(0.0, device=device)
     true = []
     preds = []
@@ -52,27 +52,10 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         scheduler.step()
 
     dist.reduce(running_loss, dst=0)
-    if rank == 0:
-        running_loss /= device_count
 
     epoch_loss = running_loss.item() / len(dataloader.dataset)
-
-    true_tensor = torch.tensor(true, device=device)
-    preds_tensor = torch.tensor(preds, device=device)
-
-    gathered_true_tensors = [torch.zeros_like(true_tensor) for _ in range(device_count)]
-    gathered_preds_tensors = [torch.zeros_like(preds_tensor) for _ in range(device_count)]
-
-    dist.all_gather(gathered_true_tensors, true_tensor)
-    dist.all_gather(gathered_preds_tensors, preds_tensor)
-
-    if rank == 0:
-        gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
-        gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
-        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=average, zero_division=0.0)
-        return epoch_loss, precision, recall, f1
-
-    return None, None, None, None
+    precision, recall, f1, _ = precision_recall_fscore_support(true, preds, average=average, zero_division=0.0)
+    return epoch_loss, precision, recall, f1
 
 def main():
     parser = argparse.ArgumentParser()
@@ -126,11 +109,6 @@ def main():
     model = DinoFeatureClassifier()
     model = model.to(device)
 
-    if device_count > 1:
-        if rank == 0:
-            logging.info(f'running distributed on {torch.cuda.device_count()} GPUs')
-        model = DistributedDataParallel(model, device_ids=[device], output_device=device)
-
     if args.optimizer_index == 0:
         optimizer = SGD(model.parameters(), lr=args.lr, momentum=0.2)
     elif args.optimizer_index == 1:
@@ -140,66 +118,54 @@ def main():
 
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) if args.scheduler == 1 else None
 
+    logging.info("Loading Data ...")
 
-    if rank == 0:
-        logging.info("Loading Data ...")
-
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample, True if args.augmentation == 1 else False)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample, True if args.augmentation == 1 else False, False)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
-    if rank == 0:
-        logging.info(f'Class weights {class_weights}')
+    logging.info(f'Class weights {class_weights}')
 
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.2)
 
-    if rank == 0:
-        logging.info("Start Training ...")
+    logging.info("Start Training ...")
 
     best_val_loss = args.best_val_loss 
     best_f1 = args.best_f1
 
     no_improvement = 0
 
-    flag_tensor = torch.zeros(1).to(device)
 
     for epoch in range(args.epochs):
         model.train()
-        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, args.t)
+        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, args.t)
         model.eval()
-        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, args.t, average=None)
-        if rank == 0:
-            wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
-            logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
+        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, args.t, average=None)
 
-            average_f1 = (val_f1[0] + val_f1[1]) / 2
+        wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
+        logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
 
-            if  best_val_loss > val_loss or average_f1 > best_f1: 
+        average_f1 = (val_f1[0] + val_f1[1]) / 2
 
-                best_val_loss = val_loss if best_val_loss > val_loss else best_val_loss
-                best_f1 = average_f1 if average_f1 > best_f1 else best_f1
+        if  best_val_loss > val_loss or average_f1 > best_f1: 
 
-                no_improvement = 0
-                logging.info(f'Saving model')
-                torch.save(model, model_path)
-                logging.info(f'Model saved to {model_path}') 
-            else:
-                no_improvement += 1
-                if no_improvement >= 40:
-                    logging.info("No Loss And F1 improvement for 40 Epoch, exiting training")
-                    flag_tensor += 1
+            best_val_loss = val_loss if best_val_loss > val_loss else best_val_loss
+            best_f1 = average_f1 if average_f1 > best_f1 else best_f1
 
-        dist.all_reduce(flag_tensor)
-
-        if flag_tensor == 1:
-            break;
+            no_improvement = 0
+            logging.info(f'Saving model')
+            torch.save(model, model_path)
+            logging.info(f'Model saved to {model_path}') 
+        else:
+            no_improvement += 1
+            if no_improvement >= 40:
+                logging.info("No Loss And F1 improvement for 40 Epoch, exiting training")
 
     # test values
     model.eval() 
-    test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
-    if rank == 0:
-        wandb.finish()
-        logging.info(f'Training completed. Best Val loss = {best_val_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f11}')
+    test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, args.t, average=None)
+    wandb.finish()
+    logging.info(f'Training completed. Best Val loss = {best_val_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f11}')
 
 
 if __name__ == "__main__":

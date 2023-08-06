@@ -89,12 +89,15 @@ class PathsAndLabels():
     def __len__(self):
         return len(self.paths)
 
-    def get_dataset(self, batch_size: int, transform) -> DataLoader:
+    def get_dataset(self, batch_size: int, transform, distributed: bool) -> DataLoader:
         dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
-        sampler = DistributedSampler(dataset, shuffle=False)
-        return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+        if distributed:
+            sampler = DistributedSampler(dataset, shuffle=False)
+            return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+        else:
+            return DataLoader(dataset, batch_size=batch_size)
 
-def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, oversample: Optional[float], augmentations: bool):
+def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, oversample: Optional[float], augmentations: bool, distributed: bool=True):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
 
@@ -125,20 +128,25 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, 
     return [
             train_data.get_dataset(
                 batch_size,
-                train_augmentations
+                train_augmentations,
+                distributed
                 ), 
                 validation_data.get_dataset(
                     batch_size,
                     transforms.Compose([
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor()
-                    ])),
+                    ]),
+                    distributed
+                    ),
                 test_data.get_dataset(
                     batch_size,
                     transforms.Compose([
                     transforms.CenterCrop(crop_size),
                     transforms.ToTensor()
-                    ])),
+                    ]),
+                    distributed
+                    ),
                 weights
                 ]
 
