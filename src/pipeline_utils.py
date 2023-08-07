@@ -31,6 +31,49 @@ class HotspotDataset(Dataset):
         image = self.transform(image)
         return image, label
 
+class TiledImageDataset(Dataset):
+    def __init__(self, image_dir: str, image_paths, labels, tile_size=224, overlap=0.5, transform=None):
+        self.image_dir = image_dir
+        self.image_paths = image_paths
+        self.labels = labels
+        self.tile_size = tile_size
+        self.overlap = overlap
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, idx):
+        image_path = os.path.join(self.image_dir, f'{self.image_paths[idx]}.png')
+        label = self.labels[idx]
+
+        # Load image with PIL
+        image = Image.open(image_path)
+        
+        # If there's a transform apply it
+        if self.transform is not None:
+            image = self.transform(image)
+            
+        # Convert to numpy array
+        image = np.array(image)
+        
+        stride = int(self.tile_size * (1 - self.overlap))
+
+        tiles = []
+        for i in range(0, image.shape[0], stride):
+            for j in range(0, image.shape[1], stride):
+                tile = image[i:i+self.tile_size, j:j+self.tile_size]
+                if tile.shape[0] != self.tile_size or tile.shape[1] != self.tile_size:
+                    # This handles the edge case where you're sampling tiles near the borders of the image
+                    # We pad the image so the tile size is always the same
+                    tile = np.pad(tile, ((0, self.tile_size - tile.shape[0]), (0, self.tile_size - tile.shape[1]), (0,0)))
+                tiles.append(tile)
+
+        tiles = np.stack(tiles, axis=0)
+        tiles = torch.from_numpy(tiles).permute(0, 3, 1, 2) # PyTorch expects channels as the second dimension
+
+        return tiles.float(), torch.tensor(label)
+
 class PathsAndLabels():
     def __init__(self, data_dir: str):
         self.paths = []
@@ -50,7 +93,6 @@ class PathsAndLabels():
         if self.label_distribution[0] == 0 and self.label_distribution[1] == 0:
             raise ValueError("Class Frequencies not counted!")
         else:
-            tot_unique_samples = self.label_distribution[0] + self.label_distribution[1]
             return 1 / (np.array(self.label_distribution, dtype=float) * 2)
 
     def push(self, split: Dict[str, List[str]], oversample: float = 0.0):
@@ -91,16 +133,17 @@ class PathsAndLabels():
     def __len__(self):
         return len(self.paths)
 
-    def get_dataset(self, batch_size: int, transform, distributed: bool) -> DataLoader:
-        dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
+    def get_dataset(self, batch_size: int, transform, distributed: bool, overlap: float) -> DataLoader:
         if distributed:
+            dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
             sampler = DistributedSampler(dataset, shuffle=False)
             return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
         else:
-            return DataLoader(dataset, batch_size=batch_size)
+            dataset = TiledImageDataset(self.data_dir, self.paths, self.labels, 224, overlap, transform)
+            return DataLoader(dataset, batch_size=batch_size, shuffle=False)
         
 
-def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, oversample: float, augmentations: bool, distributed: bool = True):
+def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, oversample: float, augmentations: bool, distributed: bool = True, overlap: float = 0.5):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
 
@@ -143,7 +186,8 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, 
             train_data.get_dataset(
                 batch_size,
                 train_augmentations,
-                distributed
+                distributed,
+                overlap
                 ), 
                 validation_data.get_dataset(
                     batch_size,
@@ -152,7 +196,8 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, 
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ]),
-                    distributed
+                    distributed,
+                    overlap
                     ),
                 test_data.get_dataset(
                     batch_size,
@@ -161,7 +206,8 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, 
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ]),
-                    distributed
+                    distributed,
+                    overlap
                     ),
                 weights
                 ]
