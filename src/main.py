@@ -89,7 +89,7 @@ def main():
     parser.add_argument("--best_f1", type=float, default=0.0)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--t", type=float, default=0.5)
-    parser.add_argument("--oversample", type=float, required=False)
+    parser.add_argument("--oversample", type=float, required=True, default=0.0)
     parser.add_argument("--augmentation", type=int, default=1)
 
     args = parser.parse_args()
@@ -155,7 +155,7 @@ def main():
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample, True if args.augmentation == 1 else False)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
