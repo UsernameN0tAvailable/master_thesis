@@ -53,7 +53,7 @@ class PathsAndLabels():
             tot_unique_samples = self.label_distribution[0] + self.label_distribution[1]
             return 1 / (np.array(self.label_distribution, dtype=float) * 2)
 
-    def push(self, split: Dict[str, List[str]], oversample: float):
+    def push(self, split: Dict[str, List[str]], oversample: float = 0.0):
 
         is_oversample = oversample > len(split['1']) / (len(split['1']) + len(split['0']))
 
