@@ -90,11 +90,11 @@ def main():
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--t", type=float, default=0.5)
     parser.add_argument("--oversample", type=float, required=True, default=0.0)
-    parser.add_argument("--augmentation", type=int, default=1)
+    parser.add_argument("--augmentations", type=int, default=1)
 
     args = parser.parse_args()
 
-    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}_s_{args.oversample}_a_{args.augmentation}_rand'
+    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}_s_{args.oversample}_a_{args.augmentations}_rand'
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
