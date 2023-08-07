@@ -24,6 +24,8 @@ from pipeline_utils import PathsAndLabels, HotspotDataset, get_dataloaders
 from scnn import StreamingCNN
 from cnn import Net, StreamNet
 
+from tqdm import tqdm
+
 
 def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, threshold, average="weighted"):
     running_loss = torch.tensor(0.0, device=device)
@@ -156,7 +158,7 @@ def main():
 
     sCNN.enable()
 
-    for epoch in range(epochs):
+    for epoch in range(args.epochs):
         running_loss = 0.0
         i = 0
         

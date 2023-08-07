@@ -1,0 +1,107 @@
+{
+    "os": "Linux-6.1.27-gentoo-r1-x86_64-x86_64-13th_Gen_Intel-R-_Core-TM-_i7-1365U-with-glibc2.37",
+    "python": "3.11.4",
+    "heartbeatAt": "2023-08-07T14:00:03.044713",
+    "startedAt": "2023-08-07T14:00:02.421063",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "--shift=1",
+        "--epochs=100",
+        "--data=/home/me/Unit/data_rename",
+        "--optimizer_index=1",
+        "--crop_size=3600",
+        "--models_dir=home/me/models",
+        "--device=cpu",
+        "--batch_size=4",
+        "--oversample=0.5"
+    ],
+    "state": "running",
+    "program": "/home/me/Uni/ViT/src/stream_main.py",
+    "codePath": "src/stream_main.py",
+    "git": {
+        "remote": "git@github.com:UsernameN0tAvailable/ViT.git",
+        "commit": "9292dfff007a4268377577f2c0b3c0f0eaaaeb97"
+    },
+    "email": "mattia.pedrazzi@outlook.com",
+    "root": "/home/me/Uni/ViT",
+    "host": "staff-202-66.eduroam.unibe.ch",
+    "username": "me",
+    "executable": "/home/me/Uni/vit_env/bin/python",
+    "cpu_count": 10,
+    "cpu_count_logical": 12,
+    "cpu_freq": {
+        "current": 2790.2720000000004,
+        "min": 400.0,
+        "max": 4333.333333333333
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 3584.19,
+            "min": 400.0,
+            "max": 5200.0
+        },
+        {
+            "current": 3739.686,
+            "min": 400.0,
+            "max": 5200.0
+        },
+        {
+            "current": 3800.0,
+            "min": 400.0,
+            "max": 5200.0
+        },
+        {
+            "current": 2700.0,
+            "min": 400.0,
+            "max": 5200.0
+        },
+        {
+            "current": 2316.874,
+            "min": 400.0,
+            "max": 3900.0
+        },
+        {
+            "current": 2321.983,
+            "min": 400.0,
+            "max": 3900.0
+        },
+        {
+            "current": 2700.0,
+            "min": 400.0,
+            "max": 3900.0
+        },
+        {
+            "current": 1159.61,
+            "min": 400.0,
+            "max": 3900.0
+        },
+        {
+            "current": 2700.0,
+            "min": 400.0,
+            "max": 3900.0
+        },
+        {
+            "current": 2700.0,
+            "min": 400.0,
+            "max": 3900.0
+        },
+        {
+            "current": 2700.0,
+            "min": 400.0,
+            "max": 3900.0
+        },
+        {
+            "current": 2700.0,
+            "min": 400.0,
+            "max": 3900.0
+        }
+    ],
+    "disk": {
+        "total": 922.2498741149902,
+        "used": 228.85461807250977
+    },
+    "memory": {
+        "total": 30.950939178466797
+    }
+}

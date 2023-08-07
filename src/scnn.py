@@ -26,17 +26,10 @@ from tqdm import tqdm
 
 # from torch.nn.grad import _grad_input_padding
 
-if '1.6' in torch.__version__: # type:ignore
-    def forward_amp_decorator(func): 
-        return torch.cuda.amp.custom_fwd(func)  # type:ignore
-    def backward_amp_decorator(func): 
-        return torch.cuda.amp.custom_bwd(func)  # type:ignore
-    from torch.cuda.amp import autocast
-else:
-    def forward_amp_decorator(func): 
-        return func
-    def backward_amp_decorator(func):
-        return func
+def forward_amp_decorator(func): 
+    return func
+def backward_amp_decorator(func):
+    return func
 
 # Load and compile cpp code to call cudnn conv2d backward function
 dirname = os.path.dirname(__file__)
@@ -288,7 +281,7 @@ class StreamingCNN(object):
                  saliency=False, gather_gradients=False, replace_non_linearity=True, 
                  eps=1e-5, copy_to_gpu=True, dtype=None, statistics_on_cpu=False,
                  normalize_on_gpu=False, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225],
-                 state_dict=None):
+                 state_dict=None, device="cpu"):
         '''
         Parameters:
             stream_module (torch.nn.Module): module containing the to be streamed layers
@@ -314,8 +307,8 @@ class StreamingCNN(object):
         self.copy_to_gpu = copy_to_gpu
         self.statistics_on_cpu = statistics_on_cpu
 
-        self.mean = torch.tensor(mean).cuda()[:, None, None]
-        self.std = torch.tensor(std).cuda()[:, None, None]
+        self.mean = torch.tensor(mean).to(device)[:, None, None]
+        self.std = torch.tensor(std).to(device)[:, None, None]
         self.should_normalize = normalize_on_gpu
 
         self._tile_output_shape = None
@@ -326,11 +319,11 @@ class StreamingCNN(object):
         self._hooks = []
 
         if state_dict is None:
-            self._configure()
+            self._configure(device)
         else:
             self.load_state_dict(state_dict)
 
-    def _configure(self):
+    def _configure(self, device: str):
         if self.replace_non_linearity: self.convert_modules_model(self.stream_module)
         self.convert_modules_model(self.stream_module, from_mod=torch.nn.BatchNorm2d, to_mod=torch.nn.Sequential)
 
@@ -350,7 +343,7 @@ class StreamingCNN(object):
         # we need float32 precision
         if self.statistics_on_cpu:
             self.stream_module = self.stream_module.cpu()
-            self.device = torch.device('cpu')  # type:ignore
+            self.device = torch.device(device)  # type:ignore
 
         # Create all-ones tile
         tile = torch.ones(self.tile_shape, dtype=self.dtype, requires_grad=True, device=self.device)
@@ -361,8 +354,8 @@ class StreamingCNN(object):
 
         # TODO; temp hack for tile sizes too big on gpu, 
         if self.statistics_on_cpu:
-            self.stream_module = self.stream_module.cuda()
-            self.device = torch.device('cuda')  # type:ignore
+            self.stream_module = self.stream_module.to(device)
+            self.device = torch.device(device)  # type:ignore
 
         # Remove all hooks and add hooks for correcting gradients
         # during streaming

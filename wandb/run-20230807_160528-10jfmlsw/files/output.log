@@ -1,0 +1,27 @@
+Conv2d(3, 16, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+ Lost(top:1.0, left:1.0, bottom:1.0, right:1.0)
+MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+ Lost(top:1.0, left:1.0, bottom:1.0, right:1.0)
+Conv2d(16, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+ Lost(top:2.0, left:2.0, bottom:2.0, right:2.0)
+MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+ Lost(top:1.0, left:1.0, bottom:1.0, right:1.0)
+ Output lost Lost(top:1.0, left:1.0, bottom:1.0, right:1.0)
+MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+ Lost(top:1.0, left:1.0, bottom:1.0, right:1.0)
+Conv2d(16, 32, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+ Lost(top:2.0, left:2.0, bottom:2.0, right:2.0)
+MaxPool2d(kernel_size=2, stride=2, padding=0, dilation=1, ceil_mode=False)
+ Lost(top:3.0, left:3.0, bottom:3.0, right:3.0)
+Conv2d(3, 16, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
+ Lost(top:6.0, left:6.0, bottom:6.0, right:6.0)
+ Input gradient lost Lost(top:7.0, left:7.0, bottom:7.0, right:7.0)
+/home/me/Uni/vit_env/lib/python3.11/site-packages/torch/nn/modules/module.py:1344: UserWarning: Using a non-full backward hook when the forward contains multiple autograd Nodes is deprecated and will be removed in future versions. This hook will be missing some grad_input. Please use register_full_backward_hook to get the documented behavior.
+  warnings.warn("Using a non-full backward hook when the forward contains multiple autograd Nodes "
+Traceback (most recent call last):
+  File "/home/me/Uni/ViT/src/stream_main.py", line 209, in <module>
+    main()
+  File "/home/me/Uni/ViT/src/stream_main.py", line 159, in main
+    for epoch in range(epochs):
+                       ^^^^^^
+NameError: name 'epochs' is not defined
