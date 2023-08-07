@@ -21,6 +21,9 @@ import wandb
 
 from pipeline_utils import PathsAndLabels, HotspotDataset, get_dataloaders
 
+from scnn import StreamingCNN
+from cnn import Net, StreamNet
+
 
 def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, threshold, average="weighted"):
     running_loss = torch.tensor(0.0, device=device)
@@ -90,7 +93,6 @@ def main():
 
     run_name = f'stream_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}_s_{args.oversample}_a_{args.augmentations}_rand'
 
-
     logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
     logging.info("Creating Model ...")
 
@@ -112,84 +114,95 @@ def main():
     model_filename = f'{run_name}.pth'
     model_path = f'{args.models_dir}/{model_filename}'
 
-    if os.path.isfile(model_path):
-        logging.info(f'Loading existing model from {model_path}')
-        _ = DinoFeatureClassifier()
-        model = torch.load(model_path)
-    else:
-        logging.info(f'No existing model found. Creating a new one.')
-        model = DinoFeatureClassifier()
+    stream_net = StreamNet().to(device)
+    net = Net().to(device)
 
-    model = DinoFeatureClassifier()
-    model = model.to(device)
+    for mod in net.modules():
+        if isinstance(mod, torch.nn.Conv2d):
+            torch.nn.init.kaiming_normal_(mod.weight, nonlinearity='relu')
+            mod.bias.data.fill_(0)
+
+    params = list(stream_net.parameters()) + list(net.parameters())
+
+    sCNN = StreamingCNN(stream_net, tile_shape=(1, 3, 32, 32), deterministic=True, verbose=True)
+
+    sCNN.verbose = False
 
     if args.optimizer_index == 0:
-        optimizer = SGD(model.parameters(), lr=args.lr, momentum=0.2)
+        optimizer = SGD(params, lr=args.lr, momentum=0.2)
     elif args.optimizer_index == 1:
-        optimizer = AdamW(model.parameters(), lr=args.lr)
+        optimizer = AdamW(params, lr=args.lr)
     elif args.optimizer_index == 2:
-        optimizer = Adam(model.parameters(), lr=args.lr)
+        optimizer = Adam(params, lr=args.lr)
 
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) if args.scheduler == 1 else None
 
     logging.info("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample, args.augmentations)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample, args.augmentations, False)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
-    if rank == 0:
-        logging.info(f'Class weights {class_weights}')
+    logging.info(f'Class weights {class_weights}')
 
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.2)
 
-    if rank == 0:
-        logging.info("Start Training ...")
+    logging.info("Start Training ...")
 
     best_val_loss = args.best_val_loss 
     best_f1 = args.best_f1
 
     no_improvement = 0
 
-    flag_tensor = torch.zeros(1).to(device)
+    sCNN.enable()
 
-    for epoch in range(args.epochs):
-        model.train()
-        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, args.t)
-        model.eval()
-        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, args.t, average=None)
-        if rank == 0:
-            wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
-            logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
+    for epoch in range(epochs):
+        running_loss = 0.0
+        i = 0
+        
+        for images, labels in tqdm(train_dataloader):
+            with torch.no_grad():
+                first_output = sCNN.forward(images)
+            first_output.requires_grad = True
 
-            average_f1 = (val_f1[0] + val_f1[1]) / 2
+            labels = labels.to(device)
+            
+            # inference final part of network
+            second_output = net(first_output)
 
-            if  best_val_loss > val_loss or average_f1 > best_f1: 
+            # backpropagation through final network
+            loss = criterion(second_output, labels)
+            loss.backward()
 
-                best_val_loss = val_loss if best_val_loss > val_loss else best_val_loss
-                best_f1 = average_f1 if average_f1 > best_f1 else best_f1
+            # backpropagation through first network using checkpointing / streaming
+            sCNN.backward(images, first_output.grad)
 
-                no_improvement = 0
-                logging.info(f'Saving model')
-                torch.save(model, model_path)
-                logging.info(f'Model saved to {model_path}') 
-            else:
-                no_improvement += 1
-                if no_improvement >= 40:
-                    logging.info("No Loss And F1 improvement for 40 Epoch, exiting training")
-                    flag_tensor += 1
+            optimizer.step()
+            optimizer.zero_grad()
 
-        dist.all_reduce(flag_tensor)
+            running_loss += loss.item()
+            i += 1
 
-        if flag_tensor == 1:
-            break;
+                    
+        stream_losses.append(running_loss / i)
 
-    # test values
-    model.eval() 
-    test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
-    if rank == 0:
-        wandb.finish()
-        logging.info(f'Training completed. Best Val loss = {best_val_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f11}')
+        running_loss = 0
+        i = 0
+        accurate = 0
+        with torch.no_grad():
+            for images, labels in valloader:
+                first_output = sCNN.forward(images.cuda())
+                second_output = net(first_output)
+
+                loss = criterion(second_output, labels.cuda())
+                running_loss += loss.item()
+
+                i += 1
+                accurate += (torch.argmax(torch.softmax(second_output, dim=1), dim=1).cpu() == labels).sum() / float(len(images))
+            
+        stream_val_accuracy.append(accurate / float(i))
+            
+        stream_val_losses.append(running_loss / i)
 
 
 if __name__ == "__main__":
