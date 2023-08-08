@@ -135,10 +135,12 @@ def main():
     if os.path.isfile(model_path):
         logging.info(f'Loading existing model from {model_path}')
         _ = DinoFeatureClassifier()
-        model = torch.load(model_path).to(device)
+        model = torch.load(model_path)
     else:
         logging.info(f'No existing model found. Creating a new one.')
-        model = DinoFeatureClassifier().to(device)
+        model = DinoFeatureClassifier()
+
+    model = model.to(device)
 
     if device_count > 1:
         if rank == 0:
@@ -211,6 +213,7 @@ def main():
             break;
 
     # test values
+    model = model.to(device)
     model.eval() 
     test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
     if rank == 0:
