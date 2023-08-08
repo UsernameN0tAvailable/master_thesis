@@ -91,8 +91,11 @@ def main():
     parser.add_argument("--t", type=float, default=0.5)
     parser.add_argument("--oversample", type=float, required=True, default=0.0)
     parser.add_argument("--augmentations", type=int, default=1)
+    parser.add_argument("--test_only", type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()
+
+    test_only = args.test_only == 1
 
     run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}_s_{args.oversample}_a_{args.augmentations}_rand'
 
@@ -105,15 +108,16 @@ def main():
         logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
         logging.info("Creating Model ...")
 
-        wandb.init(
-                project=f'ViT {args.crop_size} New',
-                group=run_name,
-                config= {
-                    "learning_rate": args.lr,
-                    "architecture": "ViT",
-                    "dataset": "Tumor Budding Hotspots",
-                    }
-                )
+        if not test_only:
+            wandb.init(
+                    project=f'ViT {args.crop_size} New',
+                    group=run_name,
+                    config= {
+                        "learning_rate": args.lr,
+                        "architecture": "ViT",
+                        "dataset": "Tumor Budding Hotspots",
+                        }
+                    )
 
     device_count = torch.cuda.device_count()
 
@@ -174,7 +178,9 @@ def main():
 
     flag_tensor = torch.zeros(1).to(device)
 
-    for epoch in range(args.epochs):
+    epochs = 0 if test_only else args.epochs
+
+    for epoch in range(epochs):
         model.train()
         train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, args.t)
         model.eval()
@@ -210,7 +216,9 @@ def main():
     test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
     if rank == 0:
         wandb.finish()
-        logging.info(f'Training completed. Best Val loss = {best_val_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f11}')
+        logging.info(f'Best Val loss = {best_val_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f11}')
+        print(f'Best Val loss = {best_val_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f11}')
+
 
 
 if __name__ == "__main__":
