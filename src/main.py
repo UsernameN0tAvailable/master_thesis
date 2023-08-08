@@ -134,7 +134,7 @@ def main():
     if os.path.isfile(model_path):
         logging.info(f'Loading existing model from {model_path}')
         model = DinoFeatureClassifier()
-        model.load_state_dict(torch.load(model_path).state_dict())
+        model.load_state_dict(torch.load(model_path).module.state_dict())
 
     else:
         logging.info(f'No existing model found. Creating a new one.')
