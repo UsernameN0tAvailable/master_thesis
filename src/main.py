@@ -31,9 +31,6 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         images = images.to(device)
         labels = labels.to(device)
 
-        print("model device: ", next(model.parameters()).device, "images device: ", images.device)
-
-
         if optimizer is not None: optimizer.zero_grad()
         output = model(images)['y_pixel'].squeeze(2).squeeze(2)
 
