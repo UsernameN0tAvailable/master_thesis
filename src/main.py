@@ -130,6 +130,8 @@ def main():
     model_filename = f'{run_name}.pth'
     model_path = f'{args.models_dir}/{model_filename}'
 
+    model = None
+
     if os.path.isfile(model_path):
         logging.info(f'Loading existing model from {model_path}')
         _ = DinoFeatureClassifier()
@@ -138,7 +140,6 @@ def main():
         logging.info(f'No existing model found. Creating a new one.')
         model = DinoFeatureClassifier()
 
-    model = DinoFeatureClassifier()
     model = model.to(device)
 
     if device_count > 1:
