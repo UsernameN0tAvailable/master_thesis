@@ -193,7 +193,7 @@ def main():
                 no_improvement = 0
                 logging.info(f'Saving model')
                 torch.save(model, model_path)
-                logging.info(f'Model saved to {model_path}') 
+                logging.info(f'Model saved to {model_path}\tBest Loss: {best_val_loss}\tBest F1: {best_f1}') 
             else:
                 no_improvement += 1
                 if no_improvement >= 40:
