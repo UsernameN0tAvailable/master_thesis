@@ -133,9 +133,16 @@ def main():
 
     if os.path.isfile(model_path):
         logging.info(f'Loading existing model from {model_path}')
-        _ = DinoFeatureClassifier()
-        model = torch.load(model_path)
-        model.backbone.to(device)
+        state_dict = torch.load(model_path)
+
+        new_state_dict = {}
+        for key, value in state_dict.items():
+            new_key = key.replace('module.', '')
+            new_state_dict[new_key] = value
+
+        model = DinoFeatureClassifier()
+        model.load_state_dict(new_state_dict)
+
     else:
         logging.info(f'No existing model found. Creating a new one.')
         model = DinoFeatureClassifier()
