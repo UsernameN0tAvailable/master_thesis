@@ -135,12 +135,10 @@ def main():
     if os.path.isfile(model_path):
         logging.info(f'Loading existing model from {model_path}')
         _ = DinoFeatureClassifier()
-        model = torch.load(model_path)
+        model = torch.load(model_path).to(device)
     else:
         logging.info(f'No existing model found. Creating a new one.')
-        model = DinoFeatureClassifier()
-
-    model = model.to(device)
+        model = DinoFeatureClassifier().to(device)
 
     if device_count > 1:
         if rank == 0:
