@@ -109,8 +109,9 @@ def main():
 
         if not test_only:
             wandb.init(
-                    project=f'ViT {args.crop_size} New',
-                    group=run_name,
+                    project=f'pT1',
+                    group="ViT",
+                    name = f'cv{args.shift}',
                     config= {
                         "learning_rate": args.lr,
                         "architecture": "ViT",
