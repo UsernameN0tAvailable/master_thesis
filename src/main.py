@@ -110,13 +110,32 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet>, <patch_size>]")
 
 
-def create_model(param, models_dir: str, load_name: Optional[str] = None):
+def create_model(param, lr: float, epochs: int, load_path: str):
+
     if param['type'] == 'vit':
         model = DinoFeatureClassifier()
-        if load_name is not None:
-            logging.info('f Loading stored ViT')
-            model.load_state_dict(torch.load(f'{models_dir}/{load_name}').module.state_dict())
-        return model
+        if os.path.isfile(load_path):
+            logging.info('Loading stored ViT')
+            checkpoint = torch.load(load_path)
+
+            model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model'].items()}
+
+            model.load_state_dict(model_state_dict)
+
+            optimizer = AdamW(model.parameters(), lr=lr)
+            optimizer.load_state_dict(checkpoint['optimizer'])
+
+            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
+            scheduler.load_state_dict(checkpoint['scheduler'])
+
+            return model, optimizer, scheduler, float(checkpoint['best_f1']), float(checkpoint['best_loss']), int(checkpoint['epoch']), True
+        else:
+            logging.info('Creating New ViT')
+            optimizer = AdamW(model.parameters(), lr=lr)
+            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
+            return model, optimizer, scheduler, 0.0, float('inf'), 0, False
+    else:
+        raise ValueError('Not Imlemented')
 
 
 
@@ -126,12 +145,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--shift", type=int, default=0, choices=[0, 1, 2, 3, 4])
     parser.add_argument("--epochs", type=int, default=250)
-    parser.add_argument("--data_dir", type=str, default='data')
-    parser.add_argument("--models_dir", type=str, default='~/models')
+    parser.add_argument("--data_dir", type=str, required=True)
+    parser.add_argument("--models_dir", type=str, required=True)
     parser.add_argument("--type", type=str, default="vit[2048]")
     parser.add_argument("--device", type=str, default='cuda', choices=['cuda', 'cpu'])
-    parser.add_argument("--batch_size", type=check_batch_size, default=4)
-    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--batch_size", type=check_batch_size, required=True)
+    parser.add_argument("--lr", type=float, required=True)
     parser.add_argument("--oversample", type=float, default=0.5)
     parser.add_argument("--test_only", type=int, default=0, choices=[0, 1])
 
@@ -141,16 +160,26 @@ def main():
     test_only = args.test_only == 1
 
     run_name = f'{args.type}_shift_{args.shift}_batch_size_{args.batch_size}_oversample_{args.oversample}'
+    checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
     rank = int(os.environ["LOCAL_RANK"])
 
+
+    device_count = torch.cuda.device_count()
+
+    device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
+
     if rank == 0:
-
         logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
-        logging.info("Creating Model ...")
+        logging.info(f'Using device: {device}')
 
+
+    model, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath)
+
+
+    if rank == 0:
         if not test_only:
             wandb.init(
                     project=f'pT1',
@@ -160,31 +189,9 @@ def main():
                         "learning_rate": args.lr,
                         "architecture": f'{args.type}',
                         "dataset": "Tumor Budding Hotspots",
-                        }
+                        },
+                    resume=is_resume
                     )
-
-    device_count = torch.cuda.device_count()
-
-    device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
-
-    if rank == 0:
-        logging.info(f'Using device: {device}')
-
-    model = None
-    best_loss = float('inf')
-    best_f1 = 0.0
-
-    for model_name in os.listdir(args.models_dir):
-        if model_name.startswith(run_name):
-            tmp = model_name.split('_best_f1_')
-            best_loss = float(tmp[0].split('best_loss_')[1])
-            best_f1 = float(tmp[1].split('.pth')[0])
-            model = create_model(model_type, args.models_dir, model_name) 
-
-    # did not find
-    if model is None:
-        model = create_model(model_type, args.models_dir)
-
     assert model is not None
 
     model = model.to(device)
@@ -217,7 +224,7 @@ def main():
 
     epochs = 0 if test_only else 10000 
 
-    for epoch in range(epochs):
+    while epoch < epochs:
         model.train()
         train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
         model.eval()
@@ -234,9 +241,19 @@ def main():
                 best_f1 = average_f1 if average_f1 > best_f1 else best_f1
 
                 no_improvement = 0
-                model_filename = f'{run_name}_best_loss_{best_loss}_best_f1_{best_f1}.pth'
-                logging.info(f'Saving model to {model_filename}')
-                torch.save(model, f'{args.model_dir}/{model_filename}')
+                model_path = f'{args.models_dir}/{run_name}.pth'
+                logging.info(f'Saving model to {model_path}')
+                torch.save({
+                    'epoch': epoch,
+                    'model': model.state_dict(), 
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict(),
+                    'best_f1': best_f1,
+                    'best_loss': best_loss,
+                    },
+                    model_path 
+                    )
+                wandb.save(model_path)
             else:
                 no_improvement += 1
                 if no_improvement >= 40:
