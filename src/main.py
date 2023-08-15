@@ -1,7 +1,7 @@
 import os
 import logging
 import argparse
-from typing import List
+from typing import List, Optional
 import numpy as np
 from PIL import Image
 from sklearn.metrics import precision_recall_fscore_support
@@ -12,6 +12,8 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from vit import DinoFeatureClassifier
+
+import re
 
 # distribute
 from torch.nn.parallel import DistributedDataParallel
@@ -73,30 +75,72 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
 
     return None, None, None, None
 
+
+# validation
+def check_batch_size(value):
+    ivalue = int(value)
+    if ivalue <= 0:
+         raise argparse.ArgumentTypeError("%s is an invalid positive int value" % value)
+    return ivalue
+
+def validate_model_and_extract(s):
+    # Check for vit[*] format
+    vit_match = re.match(r'^(vit)\[(\d+)\]$', s)
+    if vit_match:
+        number = int(vit_match.group(2))
+        if number > 0 and number % 16 == 0:
+            return {'type': 'vit', 'value': number}
+        else:
+            raise ValueError(f"Invalid value for 'vit': {number}. It must be a positive integer divisible by 16.")
+
+    # Check for stream[m, n] format
+    stream_match = re.match(r'^stream\[(vit|cnn|resnet), (\d+)\]$', s)
+    if stream_match:
+        m = stream_match.group(1)
+        n = int(stream_match.group(2))
+
+        if n <= 0:
+            raise ValueError(f"Invalid value for 'n': {n}. It must be a positive integer.")
+        
+        if m == "vit" and n % 16 != 0:
+            raise ValueError(f"Invalid combination: stream[{m}, {n}]. When 'm' is 'vit', 'n' must be divisible by 16.")
+        
+        return {'type': 'stream', 'subtype': m, 'value': n}
+
+    raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet>, <patch_size>]")
+
+
+def create_model(param, models_dir: str, load_name: Optional[str] = None):
+    if param['type'] == 'vit':
+        model = DinoFeatureClassifier()
+        if load_name is not None:
+            logging.info('f Loading stored ViT')
+            model.load_state_dict(torch.load(f'{models_dir}/{load_name}').module.state_dict())
+        return model
+
+
+
+
 def main():
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--shift", type=int, default=0, choices=[0, 1, 2, 3, 4])
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=250)
     parser.add_argument("--data_dir", type=str, default='data')
-    parser.add_argument("--optimizer_index", type=int, default=0, choices=[0, 1, 2])
-    parser.add_argument("--scheduler", type=int, choices=[0, 1])
-    parser.add_argument("--crop_size", type=lambda c: int(c) if int(c) > 0 and int(c) % 16 == 0 else argparse.ArgumentTypeError(f"{c} crop size has to be multiple of 16"))
     parser.add_argument("--models_dir", type=str, default='~/models')
+    parser.add_argument("--type", type=str, default="vit[2048]")
     parser.add_argument("--device", type=str, default='cuda', choices=['cuda', 'cpu'])
-    parser.add_argument("--batch_size", type=lambda x: int(x) if int(x) > 0 else argparse.ArgumentTypeError(f"{x} is an invalid batch size"))
-    parser.add_argument("--best_val_loss", type=float, default=float('inf'))
-    parser.add_argument("--best_f1", type=float, default=0.0)
+    parser.add_argument("--batch_size", type=check_batch_size, default=4)
     parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--t", type=float, default=0.5)
-    parser.add_argument("--oversample", type=float, required=True, default=0.0)
-    parser.add_argument("--augmentations", type=int, default=1)
+    parser.add_argument("--oversample", type=float, default=0.5)
     parser.add_argument("--test_only", type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()
 
+    model_type = validate_model_and_extract(args.type)
     test_only = args.test_only == 1
 
-    run_name = f'n_model_shift_{args.shift}_opt_{args.optimizer_index}_crop_{args.crop_size}_batch_size_{args.batch_size}_scheduler_{args.scheduler}_t_{args.t}_s_{args.oversample}_a_{args.augmentations}_rand'
+    run_name = f'{args.type}_shift_{args.shift}_batch_size_{args.batch_size}_oversample_{args.oversample}'
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
@@ -110,11 +154,11 @@ def main():
         if not test_only:
             wandb.init(
                     project=f'pT1',
-                    group="ViT",
+                    group=f'{args.type}',
                     name = f'cv{args.shift}',
                     config= {
                         "learning_rate": args.lr,
-                        "architecture": "ViT",
+                        "architecture": f'{args.type}',
                         "dataset": "Tumor Budding Hotspots",
                         }
                     )
@@ -126,42 +170,36 @@ def main():
     if rank == 0:
         logging.info(f'Using device: {device}')
 
-    # load model if it's already present
-    model_filename = f'{run_name}.pth'
-    model_path = f'{args.models_dir}/{model_filename}'
-
     model = None
+    best_loss = float('inf')
+    best_f1 = 0.0
 
-    if os.path.isfile(model_path):
-        logging.info(f'Loading existing model from {model_path}')
-        model = DinoFeatureClassifier()
-        model.load_state_dict(torch.load(model_path).module.state_dict())
+    for model_name in os.listdir(args.models_dir):
+        if model_name.startswith(run_name):
+            tmp = model_name.split('_best_f1_')
+            best_loss = float(tmp[0].split('best_loss_')[1])
+            best_f1 = float(tmp[1].split('.pth')[0])
+            model = create_model(args.type, args.models_dir, model_name) 
 
-    else:
-        logging.info(f'No existing model found. Creating a new one.')
-        model = DinoFeatureClassifier()
+    # did not find
+    if model is None:
+        model = create_model(args.type, args.models_dir)
+
+    assert model is not None
 
     model = model.to(device)
 
-    if device_count > 1:
-        if rank == 0:
-            logging.info(f'running distributed on {torch.cuda.device_count()} GPUs')
-        model = DistributedDataParallel(model, device_ids=[device], output_device=device)
+    if rank == 0:
+        logging.info(f'running distributed on {torch.cuda.device_count()} GPUs')
+    model = DistributedDataParallel(model, device_ids=[device], output_device=device)
 
-    if args.optimizer_index == 0:
-        optimizer = SGD(model.parameters(), lr=args.lr, momentum=0.2)
-    elif args.optimizer_index == 1:
-        optimizer = AdamW(model.parameters(), lr=args.lr)
-    elif args.optimizer_index == 2:
-        optimizer = Adam(model.parameters(), lr=args.lr)
-
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) if args.scheduler == 1 else None
-
+    optimizer = AdamW(model.parameters(), lr=args.lr)
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) 
 
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample, args.augmentations)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample, model_type)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
@@ -173,14 +211,11 @@ def main():
     if rank == 0:
         logging.info("Start Training ...")
 
-    best_val_loss = args.best_val_loss 
-    best_f1 = args.best_f1
-
     no_improvement = 0
 
     flag_tensor = torch.zeros(1).to(device)
 
-    epochs = 0 if test_only else args.epochs
+    epochs = 0 if test_only else 10000 
 
     for epoch in range(epochs):
         model.train()
@@ -193,15 +228,15 @@ def main():
 
             average_f1 = (val_f1[0] + val_f1[1]) / 2
 
-            if  best_val_loss > val_loss or average_f1 > best_f1: 
+            if  best_loss > val_loss or average_f1 > best_f1: 
 
-                best_val_loss = val_loss if best_val_loss > val_loss else best_val_loss
+                best_loss = val_loss if best_loss > val_loss else best_loss
                 best_f1 = average_f1 if average_f1 > best_f1 else best_f1
 
                 no_improvement = 0
-                logging.info(f'Saving model')
-                torch.save(model, model_path)
-                logging.info(f'Model saved to {model_path}\tBest Loss: {best_val_loss}\tBest F1: {best_f1}') 
+                model_filename = f'{run_name}_best_loss_{best_loss}_best_f1_{best_f1}.pth'
+                logging.info(f'Saving model to {model_filename}')
+                torch.save(model, f'{args.model_dir}/{model_filename}')
             else:
                 no_improvement += 1
                 if no_improvement >= 40:
@@ -219,9 +254,7 @@ def main():
     test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
     if rank == 0:
         wandb.finish()
-        logging.info(f'Best Val loss = {best_val_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}')
-        print(f'Best Val loss = {best_val_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}')
-
+        logging.info(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}')
 
 
 if __name__ == "__main__":

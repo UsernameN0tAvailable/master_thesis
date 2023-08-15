@@ -96,7 +96,7 @@ class PathsAndLabels():
         sampler = DistributedSampler(dataset, shuffle=False)
         return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
 
-def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, oversample: float, augmentations: bool):
+def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, oversample: float, model_type):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
 
@@ -122,12 +122,20 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, 
 
     weights = train_data.get_weights()
 
-    train_augmentations = transforms.Compose([transforms.RandomCrop(crop_size),Random90Rotation(), transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip(), transforms.ColorJitter(brightness=0.2),transforms.ToTensor(),RandomNoise(std=0.05), transforms.GaussianBlur(5, sigma=(0.1, 2.0)), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]) if augmentations else transforms.Compose([transforms.RandomCrop(crop_size), transforms.ToTensor(), transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
-
     return [
             train_data.get_dataset(
                 batch_size,
-                train_augmentations
+                transforms.Compose([
+                    transforms.RandomCrop(int(model_type['value'])) if model_type['type'] == 'vit' else transforms.CenterCrop(int(model_type['value'])),
+                    Random90Rotation(), 
+                    transforms.RandomHorizontalFlip(), 
+                    transforms.RandomVerticalFlip(), 
+                    transforms.ColorJitter(brightness=0.2), 
+                    transforms.ToTensor(),RandomNoise(std=0.05), 
+                    transforms.GaussianBlur(5, sigma=(0.1, 2.0)), 
+                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                    ]
+                )
                 ), 
                 validation_data.get_dataset(
                     batch_size,
