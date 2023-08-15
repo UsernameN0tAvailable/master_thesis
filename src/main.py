@@ -24,7 +24,7 @@ import wandb
 from pipeline_utils import PathsAndLabels, HotspotDataset, get_dataloaders
 
 
-def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, threshold, average="weighted"):
+def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average="weighted"):
     running_loss = torch.tensor(0.0, device=device)
     true = []
     preds = []
@@ -44,7 +44,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
 
         running_loss += loss.item() * images.size(0)
 
-        predicted = (torch.nn.functional.softmax(output.data, dim=1)[:, 1] > threshold).long() if threshold != 0.5 else torch.max(output.data, 1)[1]
+        predicted = torch.max(output.data, 1)[1]
         
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
@@ -179,11 +179,11 @@ def main():
             tmp = model_name.split('_best_f1_')
             best_loss = float(tmp[0].split('best_loss_')[1])
             best_f1 = float(tmp[1].split('.pth')[0])
-            model = create_model(args.type, args.models_dir, model_name) 
+            model = create_model(model_type, args.models_dir, model_name) 
 
     # did not find
     if model is None:
-        model = create_model(args.type, args.models_dir)
+        model = create_model(model_type, args.models_dir)
 
     assert model is not None
 
@@ -199,7 +199,7 @@ def main():
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.crop_size, args.batch_size, args.oversample, model_type)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.batch_size, args.oversample, model_type)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
@@ -219,9 +219,9 @@ def main():
 
     for epoch in range(epochs):
         model.train()
-        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, args.t)
+        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
         model.eval()
-        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, args.t, average=None)
+        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
         if rank == 0:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')

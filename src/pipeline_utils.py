@@ -96,7 +96,7 @@ class PathsAndLabels():
         sampler = DistributedSampler(dataset, shuffle=False)
         return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
 
-def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, oversample: float, model_type):
+def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
 
@@ -122,11 +122,13 @@ def get_dataloaders(shift: int, data_dir: str, crop_size: int, batch_size: int, 
 
     weights = train_data.get_weights()
 
+    crop_size = int(model_type['value'])
+
     return [
             train_data.get_dataset(
                 batch_size,
                 transforms.Compose([
-                    transforms.RandomCrop(int(model_type['value'])) if model_type['type'] == 'vit' else transforms.CenterCrop(int(model_type['value'])),
+                    transforms.RandomCrop(crop_size) if model_type['type'] == 'vit' else transforms.CenterCrop(crop_size),
                     Random90Rotation(), 
                     transforms.RandomHorizontalFlip(), 
                     transforms.RandomVerticalFlip(), 
