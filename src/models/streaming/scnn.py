@@ -31,7 +31,6 @@ class StreamingNet(torch.nn.Module):
         for mod in self.top_net.modules():
             if isinstance(mod, torch.nn.Conv2d):
                 torch.nn.init.kaiming_normal_(mod.weight, nonlinearity='relu')
-                mod.bias.data.fill_(0)
 
         self.bottom_net = bottom_net
         self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False)

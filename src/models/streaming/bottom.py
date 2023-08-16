@@ -31,10 +31,11 @@ class BottomCNN(nn.Module):  # Not subclassing from nn.Sequential anymore
         return x
 
 
-class BottomNet(nn.Module):
+class BackboneNet(nn.Module):
     def __init__(
             self,
-            backbone
+            backbone,
+            out_channels
     ):
         super().__init__()
 
@@ -48,7 +49,7 @@ class BottomNet(nn.Module):
         last_layer_size = parameters[-1].shape[0]
 
         self.resize_net = torch.nn.Sequential( 
-            torch.nn.Conv2d(last_layer_size, 32, kernel_size=3, stride=4, padding=1),  # This convolution will reduce the spatial dimensions by 4.
+            torch.nn.Conv2d(last_layer_size, out_channels, kernel_size=3, stride=4, padding=1),  # This convolution will reduce the spatial dimensions by 4.
             torch.nn.ReLU(inplace=True),
         )
 
@@ -59,9 +60,9 @@ class BottomNet(nn.Module):
 
 
 
-class BottomVit(BottomNet):
-    def __init__(self):
-        super(BottomVit, self).__init__(torch.hub.load('facebookresearch/dino:main', 'dino_vits16'))
+class Vit(BackboneNet):
+    def __init__(self, out_channels):
+        super(Vit, self).__init__(torch.hub.load('facebookresearch/dino:main', 'dino_vits16'), out_channels)
 
     def forward(self, img, n: Optional[int] = 1):
 
@@ -78,16 +79,16 @@ class BottomVit(BottomNet):
             feat_tokens = feat_tokens[0]
             out = out[0]
 
-        return super(BottomVit, self).forward(out, height, width)
+        return super(BackboneNet, self).forward(out, height, width)
 
 
-class BottomResNet(BottomNet):
-    def __init__(self):
-        super(BottomResNet, self).__init__(resnet50(weights=ResNet50_Weights.IMAGENET1K_V2))
+class ResNet(BackboneNet):
+    def __init__(self, out_channels):
+        super(ResNet, self).__init__(resnet50(weights=ResNet50_Weights.IMAGENET1K_V2), out_channels)
 
     def forward(self, img):
         height = img.shape[2]
         width = img.shape[3]
 
         out = self.backbone(img)
-        return super(BottomResNet, self).forward(out, height, width)
+        return super(ResNet, self).forward(out, height, width)

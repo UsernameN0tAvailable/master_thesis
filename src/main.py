@@ -7,7 +7,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from models.dino import DinoFeatureClassifier
 from models.streaming.top import TopCNN
-from models.streaming.bottom import BottomCNN, BottomVit, BottomResNet
+from models.streaming.bottom import BottomCNN, Vit, ResNet
 from models.streaming.scnn import StreamingNet
 
 import re
@@ -137,23 +137,15 @@ def create_model(param, lr: float, epochs: int, load_path: str, device: str):
 
         if top_param == 'cnn':
             top_net = TopCNN()
-        elif top_param == 'vit':
-            top_net = TopCNN()
-        elif top_param == 'resnet':
-            top_net = TopCNN()
-        elif top_param == 'unet':
-            top_net = TopCNN()
         else:
             raise ValueError(f'No {top_param} top net available!!')
 
         if bottom_param == 'cnn':
             bottom_net = BottomCNN()
         elif bottom_param == 'vit':
-            bottom_net = BottomVit()
+            bottom_net = Vit(32)
         elif bottom_param == 'resnet':
-            bottom_net = BottomResNet()
-        elif bottom_param == 'unet':
-            bottom_net = BottomCNN()
+            bottom_net = ResNet(32)
         else:
             raise ValueError(f'No {bottom_param} bottom net available!!')
 
@@ -250,7 +242,7 @@ def main():
     if rank == aggr_gpu:
         if not test_only:
             wandb.init(
-                    project=f'pT1 Test',
+                    project=f'pT1 Eval',
                     group=f'{args.type}',
                     name = f'cv{args.shift}',
                     config= {
