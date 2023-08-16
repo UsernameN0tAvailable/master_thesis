@@ -118,7 +118,7 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
         else: 
             test_data.push(split)
 
-    logging.info(f'SAMPLES COUNT:\ntrain: {len(train_data)}, val: {len(validation_data)}, test: {len(test_data)}')
+    logging.info(f'SAMPLES COUNT:\ttrain: {len(train_data)}, val: {len(validation_data)}, test: {len(test_data)}')
 
     weights = train_data.get_weights()
 

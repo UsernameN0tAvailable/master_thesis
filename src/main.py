@@ -1,29 +1,25 @@
 import os
 import logging
 import argparse
-from typing import List, Optional
-import numpy as np
-from PIL import Image
 from sklearn.metrics import precision_recall_fscore_support
 import torch
 from torch import nn
-from torch.optim import SGD, AdamW, Adam
+from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
 from vit import DinoFeatureClassifier
 
 import re
 
 # distribute
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 import wandb
 
 import pynvml
 
-from pipeline_utils import PathsAndLabels, HotspotDataset, get_dataloaders
+from pipeline_utils import get_dataloaders
+
+from torch.nn import SyncBatchNorm
 
 
 def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average="weighted"):
@@ -174,8 +170,6 @@ def main():
 
     device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
 
-    print(device_count, device)
-
     pynvml.nvmlInit()
     # Assuming you want the memory info for the first GPU
     handle = pynvml.nvmlDeviceGetHandleByIndex(rank)
@@ -183,11 +177,12 @@ def main():
 
     batch_pct = (info.total / (1024 ** 2)) / args.base_mem
 
+    actual_batch_size = int(batch_pct * args.batch_size)
+
     pynvml.nvmlShutdown()
 
-    if rank == 0:
-        logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
-        logging.info(f'Using device: {device}')
+    logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
+    logging.info(f'Using device: {device} with batch size: {actual_batch_size}')
 
 
     model, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath)
@@ -213,6 +208,7 @@ def main():
     if rank == 0:
         logging.info(f'running distributed on {torch.cuda.device_count()} GPUs')
     model = DistributedDataParallel(model, device_ids=[device], output_device=device)
+    model = SyncBatchNorm.convert_sync_batchnorm(model)
 
     optimizer = AdamW(model.parameters(), lr=args.lr)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) 
@@ -220,7 +216,7 @@ def main():
     if rank == 0:
         logging.info("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, args.batch_size, args.oversample, model_type)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, actual_batch_size, args.oversample, model_type)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
