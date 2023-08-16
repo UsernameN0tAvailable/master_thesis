@@ -172,11 +172,13 @@ class Random90Rotation:
         return transforms.functional.rotate(img, angle)
 
 class Logger():
+    logging_rank: int = 0
     @staticmethod
-    def init(filename: str, level =logging.INFO):
+    def init(filename: str, rank: int, level =logging.INFO):
+        Logger.logging_rank = rank
         logging.basicConfig(level=level, filemode='a', filename=filename)
 
     @staticmethod
-    def log(val: str, rank: int = 0):
-        if rank is None or int(os.environ["LOCAL_RANK"]) == rank:
+    def log(val: str, rank: Optional[int] = -1):
+        if rank is None or (rank == -1 and int(os.environ["LOCAL_RANK"]) == Logger.logging_rank) or int(os.environ["LOCAL_RANK"]) == rank:
             logging.info(val)

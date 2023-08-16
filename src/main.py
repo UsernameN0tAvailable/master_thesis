@@ -2,7 +2,7 @@ import os
 import argparse
 from sklearn.metrics import precision_recall_fscore_support
 import torch
-from torch import nn
+from torch import Value, nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from models.dino import DinoFeatureClassifier
@@ -48,7 +48,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
     running_loss /= len(dataloader) 
     running_loss *= local_batch_size
 
-    dist.reduce(running_loss, dst=0, op=dist.ReduceOp.AVG)
+    dist.reduce(running_loss, dst=Logger.logging_rank, op=dist.ReduceOp.AVG)
 
     epoch_loss = running_loss.item() / tot_batch_size
 
@@ -61,7 +61,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
     dist.all_gather(gathered_true_tensors, true_tensor)
     dist.all_gather(gathered_preds_tensors, preds_tensor)
 
-    if rank == 0:
+    if rank == Logger.logging_rank:
         gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
         gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
         precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=average, zero_division=0.0)
@@ -202,7 +202,6 @@ def main():
     model_type = validate_model_and_extract(args.type)
     test_only = args.test_only == 1
 
-
     dist.init_process_group(backend='nccl', init_method='env://')
 
     rank = int(os.environ["LOCAL_RANK"])
@@ -210,7 +209,7 @@ def main():
     device_count = torch.cuda.device_count()
     device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
 
-
+    # Memory Load Management
     pynvml.nvmlInit()
     handle = pynvml.nvmlDeviceGetHandleByIndex(rank)
     local_gpu_memory = int(pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024 ** 2))
@@ -220,6 +219,7 @@ def main():
     dist.all_reduce(tot_gpu_memory, op=dist.ReduceOp.SUM)
 
     local_batch_size = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
+
     tot_batch_size = torch.tensor(local_batch_size, dtype=torch.int, device=device)
     dist.all_reduce(tot_batch_size, op=dist.ReduceOp.SUM)
     tot_batch_size = tot_batch_size.item()
@@ -227,9 +227,18 @@ def main():
     run_name = f'{args.type}_shift_{args.shift}_batch_size_{tot_batch_size}_oversample_{args.oversample}'
     checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
 
+    # Select GPU with lowest load to aggregate results
+    local_gpu_load_per_batch = 1 / (local_gpu_memory / local_batch_size)
 
-    Logger.init(run_name)
+    all_loads = torch.zeros(device_count, dtype=torch.float32, device=device) 
+    all_loads[rank] = torch.tensor(local_gpu_load_per_batch, dtype=torch.float32, device=device)
+    dist.all_reduce(all_loads, op=dist.ReduceOp.SUM)
+
+    aggr_gpu = int( all_loads.argmin().item())
+
+    Logger.init(run_name, aggr_gpu)
     Logger.log(f'Tot Batch Size: {tot_batch_size}')
+    Logger.log(f'Aggregate Results at GPU: {aggr_gpu}')
     Logger.log(f'Using device: {device} with batch size: {local_batch_size}', None)
 
 
@@ -238,7 +247,7 @@ def main():
     model = model.to(device)
 
 
-    if rank == 0:
+    if rank == aggr_gpu:
         if not test_only:
             wandb.init(
                     project=f'pT1 Test',
@@ -284,7 +293,7 @@ def main():
         train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, local_batch_size, tot_batch_size)
         model.eval()
         val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, local_batch_size, tot_batch_size, average=None)
-        if rank == 0:
+        if rank == aggr_gpu:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             Logger.log(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}', None)
 
@@ -325,7 +334,7 @@ def main():
     model = model.to(device)
     model.eval() 
     test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
-    if rank == 0:
+    if rank == aggr_gpu:
         wandb.finish()
         Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
 
