@@ -5,25 +5,8 @@
 
 # To evaluate whether a neural network using streaming trains equivalently to the conventional training, we can train a CNN on small images using both methods, starting from the same initialization. We used a subset of the ImageNet dataset, [ImageNette](https://github.com/fastai/imagenette), using 100 examples of 10 ImageNet classes (tench, English springer, cassette player, chain saw, church, French horn, garbage truck, gas pump, golf ball, parachute).
 
-import copy
 import torch
-import numpy as np
-import torchvision
 import torchvision.transforms.functional
-from PIL import Image
-from tqdm import tqdm
-from pathlib import Path
-from pipeline_utils import get_dataloaders
-from scnn import StreamingCNN
-from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import CosineAnnealingLR
-from sklearn.metrics import precision_recall_fscore_support
-import argparse
-import wandb
-
-from torch import nn
-
-from models import BottomVit, BottomResNet, BottomCNN
 
 
 # # Model definition
@@ -50,7 +33,7 @@ class TopCNN(torch.nn.Module):
 
 
 
-
+"""
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -254,3 +237,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+"""

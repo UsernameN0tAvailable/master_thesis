@@ -123,12 +123,10 @@ class DinoFeatureClassifier(DinoFeature):
 
     def forward_step(self, images, labels, criterion, optimizer):
         output = self.forward(images)
-
         loss = criterion(output, labels.view(-1))
 
         if optimizer is not None:
             loss.backward()
-            optimizer.step()
 
         return output, loss
 

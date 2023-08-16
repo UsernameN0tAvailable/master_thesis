@@ -22,8 +22,10 @@ from torch.nn.modules.utils import _pair
 
 from tqdm import tqdm
 
-class StreamingNet():
+class StreamingNet(torch.nn.Module):
+ 
     def __init__(self, top_net, bottom_net, tile_size: int):
+        super().__init__()
         self.top_net = top_net
 
         for mod in self.top_net.modules():
@@ -57,11 +59,8 @@ class StreamingNet():
 
         return top_output, loss
 
-
-
-
-
-
+    def state_dict(self):
+        return {'top': self.top_net.state_dict(), 'bottom': self.bottom_net.state_dict()}
 
 
 # from torch.nn.grad import _grad_input_padding

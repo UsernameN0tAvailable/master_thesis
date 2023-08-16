@@ -7,6 +7,9 @@ from torch import nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from models.dino import DinoFeatureClassifier
+from models.streaming.top import TopCNN
+from models.streaming.bottom import BottomCNN
+from models.streaming.scnn import StreamingNet
 
 import re
 
@@ -104,6 +107,7 @@ def validate_model_and_extract(s):
 
 def create_model(param, lr: float, epochs: int, load_path: str):
 
+
     if param['type'] == 'vit':
         model = DinoFeatureClassifier()
         if os.path.isfile(load_path):
@@ -126,8 +130,58 @@ def create_model(param, lr: float, epochs: int, load_path: str):
             optimizer = AdamW(model.parameters(), lr=lr)
             scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
             return model, optimizer, scheduler, 0.0, float('inf'), 0, False
-    elif param['stream']:
-        raise ValueError(f'{param} Not Implemented')
+    elif param['type'] == 'stream':
+
+        top_param = param['top']
+        bottom_param = param['bottom']
+
+        if top_param == 'cnn':
+            top_net = TopCNN()
+        elif top_param == 'vit':
+            top_net = TopCNN()
+        elif top_param == 'resnet':
+            top_net = TopCNN()
+        elif top_param == 'unet':
+            top_net = TopCNN()
+        else:
+            raise ValueError(f'No {top_param} top net available!!')
+
+        if bottom_param == 'cnn':
+            bottom_net = BottomCNN()
+        elif bottom_param == 'vit':
+            bottom_net = BottomCNN()
+        elif bottom_param == 'resnet':
+            bottom_net = BottomCNN()
+        elif bottom_param == 'unet':
+            bottom_net = TopCNN()
+        else:
+            raise ValueError(f'No {bottom_param} bottom net available!!')
+
+
+        if os.path.isfile(load_path):
+            logging.info(f'Loading stored {param}')
+            checkpoint = torch.load(load_path)
+            top_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model']['top'].items()}
+            bottom_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model']['bottom'].items()}
+
+            top_net.load_state_dict(top_state_dict)
+            bottom_net.load_state_dict(bottom_state_dict)
+
+            model = StreamingNet(top_net, bottom_net, param['value']) 
+
+            optimizer = AdamW(model.parameters(), lr=lr)
+            optimizer.load_state_dict(checkpoint['optimizer'])
+
+            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
+            scheduler.load_state_dict(checkpoint['scheduler'])
+
+            return model, optimizer, scheduler, float(checkpoint['best_f1']), float(checkpoint['best_loss']), int(checkpoint['epoch']), True
+        else:
+            logging.info(f'Creating New {param}')
+            model = StreamingNet(top_net, bottom_net, param['value'])
+            optimizer = AdamW(model.parameters(), lr=lr)
+            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
+            return model, optimizer, scheduler, 0.0, float('inf'), 0, False
     else:
         raise ValueError(f'{param} Not Implemented')
 
@@ -203,6 +257,7 @@ def main():
 
     if rank == 0:
         logging.info(f'running distributed on {torch.cuda.device_count()} GPUs')
+
     model = DistributedDataParallel(model, device_ids=[device], output_device=device)
     model = SyncBatchNorm.convert_sync_batchnorm(model)
 
