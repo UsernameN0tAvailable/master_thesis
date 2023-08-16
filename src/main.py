@@ -7,7 +7,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from models.dino import DinoFeatureClassifier
 from models.streaming.top import TopCNN
-from models.streaming.bottom import BottomCNN
+from models.streaming.bottom import BottomCNN, BottomVit
 from models.streaming.scnn import StreamingNet
 
 import re
@@ -16,9 +16,7 @@ import re
 from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
 import wandb
-
 import pynvml
-
 from pipeline_utils import get_dataloaders, Logger
 
 from torch.nn import SyncBatchNorm
@@ -47,16 +45,10 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         optimizer.step()
         scheduler.step()
 
-    print("\nbef ", rank, running_loss)
-
     running_loss /= len(dataloader) 
     running_loss *= local_batch_size
 
-    print("aft ", rank, running_loss)
-
     dist.reduce(running_loss, dst=0, op=dist.ReduceOp.AVG)
-
-    print("aft reduce ", rank, running_loss)
 
     epoch_loss = running_loss.item() / tot_batch_size
 
@@ -157,7 +149,7 @@ def create_model(param, lr: float, epochs: int, load_path: str, device: str):
         if bottom_param == 'cnn':
             bottom_net = BottomCNN()
         elif bottom_param == 'vit':
-            bottom_net = BottomCNN()
+            bottom_net = BottomVit()
         elif bottom_param == 'resnet':
             bottom_net = BottomCNN()
         elif bottom_param == 'unet':
