@@ -37,30 +37,20 @@ class StreamingNet(torch.nn.Module):
         self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False)
         self.scnn.enable() # enable streaming
 
-    def parameters(self):
-        return list(list(self.bottom_net.parameters()) + list(self.top_net.parameters()))
 
-    def to(self, device):
-        self.top_net = self.top_net.to(device)
-        self.bottom_net = self.bottom_net.to(device)
-        return self
-
-    def forward_step(self, images, labels, criterion, optimizer):
+    def step(self, images, labels, criterion, is_train: bool):
         with torch.no_grad():
             bottom_output = self.scnn.forward(images)
-        bottom_output.requires_grad = True
+        bottom_output.requires_grad = True 
         top_output = self.top_net(bottom_output)
 
         loss = criterion(top_output, labels.view(-1))
 
-        if optimizer is not None:
+        if is_train is not None:
             loss.backward()
             self.scnn.backward(images, bottom_output.grad)
 
         return top_output, loss
-
-    def state_dict(self):
-        return {'top': self.top_net.state_dict(), 'bottom': self.bottom_net.state_dict()}
 
 
 # from torch.nn.grad import _grad_input_padding

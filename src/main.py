@@ -1,5 +1,4 @@
 import os
-import logging
 import argparse
 from sklearn.metrics import precision_recall_fscore_support
 import torch
@@ -20,7 +19,7 @@ import wandb
 
 import pynvml
 
-from pipeline_utils import get_dataloaders
+from pipeline_utils import get_dataloaders, Logger
 
 from torch.nn import SyncBatchNorm
 
@@ -31,19 +30,20 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
     preds = []
 
     for images, labels in dataloader:
-        images = images.to(device)
         labels = labels.to(device)
+        images = images.to(device)
 
         if optimizer is not None: optimizer.zero_grad()
-        output, loss = model.forward_step(images, labels, criterion, optimizer)
-        running_loss += loss.item() * images.size(0)
 
+        output, loss = model.module.step(images, labels, criterion, optimizer is not None)
+        running_loss += loss.item() * images.size(0)
         predicted = torch.max(output.data, 1)[1]
         
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
-    if scheduler is not None:
+    if optimizer is not None:
+        optimizer.step()
         scheduler.step()
 
     dist.reduce(running_loss, dst=0)
@@ -105,13 +105,13 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]")
 
 
-def create_model(param, lr: float, epochs: int, load_path: str):
+def create_model(param, lr: float, epochs: int, load_path: str, device: str):
 
 
     if param['type'] == 'vit':
         model = DinoFeatureClassifier()
         if os.path.isfile(load_path):
-            logging.info('Loading stored ViT')
+            Logger.log('Loading stored ViT')
             checkpoint = torch.load(load_path)
 
             model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model'].items()}
@@ -126,7 +126,7 @@ def create_model(param, lr: float, epochs: int, load_path: str):
 
             return model, optimizer, scheduler, float(checkpoint['best_f1']), float(checkpoint['best_loss']), int(checkpoint['epoch']), True
         else:
-            logging.info('Creating New ViT')
+            Logger.log('Creating New ViT')
             optimizer = AdamW(model.parameters(), lr=lr)
             scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
             return model, optimizer, scheduler, 0.0, float('inf'), 0, False
@@ -153,21 +153,18 @@ def create_model(param, lr: float, epochs: int, load_path: str):
         elif bottom_param == 'resnet':
             bottom_net = BottomCNN()
         elif bottom_param == 'unet':
-            bottom_net = TopCNN()
+            bottom_net = BottomCNN()
         else:
             raise ValueError(f'No {bottom_param} bottom net available!!')
 
 
         if os.path.isfile(load_path):
-            logging.info(f'Loading stored {param}')
+            Logger.log(f'Loading stored {param}')
             checkpoint = torch.load(load_path)
-            top_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model']['top'].items()}
-            bottom_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model']['bottom'].items()}
+            model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model'].items()}
 
-            top_net.load_state_dict(top_state_dict)
-            bottom_net.load_state_dict(bottom_state_dict)
-
-            model = StreamingNet(top_net, bottom_net, param['value']) 
+            model = StreamingNet(top_net.to(device), bottom_net.to(device), param['value']) 
+            model.load_state_dict(model_state_dict)
 
             optimizer = AdamW(model.parameters(), lr=lr)
             optimizer.load_state_dict(checkpoint['optimizer'])
@@ -177,15 +174,13 @@ def create_model(param, lr: float, epochs: int, load_path: str):
 
             return model, optimizer, scheduler, float(checkpoint['best_f1']), float(checkpoint['best_loss']), int(checkpoint['epoch']), True
         else:
-            logging.info(f'Creating New {param}')
-            model = StreamingNet(top_net, bottom_net, param['value'])
+            Logger.log(f'Creating New {param}')
+            model = StreamingNet(top_net.to(device), bottom_net.to(device), param['value'])
             optimizer = AdamW(model.parameters(), lr=lr)
             scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
             return model, optimizer, scheduler, 0.0, float('inf'), 0, False
     else:
         raise ValueError(f'{param} Not Implemented')
-
-
 
 
 def main():
@@ -231,11 +226,13 @@ def main():
 
     pynvml.nvmlShutdown()
 
-    logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
-    logging.info(f'Using device: {device} with batch size: {actual_batch_size}')
+    Logger.init(run_name)
+    Logger.log(f'Using device: {device} with batch size: {actual_batch_size}', None)
 
 
-    model, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath)
+    model, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath, device)
+
+    model = model.to(device)
 
 
     if rank == 0:
@@ -253,10 +250,7 @@ def main():
                     )
     assert model is not None
 
-    model = model.to(device)
-
-    if rank == 0:
-        logging.info(f'running distributed on {torch.cuda.device_count()} GPUs')
+    Logger.log(f'running distributed on {torch.cuda.device_count()} GPUs')
 
     model = DistributedDataParallel(model, device_ids=[device], output_device=device)
     model = SyncBatchNorm.convert_sync_batchnorm(model)
@@ -264,20 +258,17 @@ def main():
     optimizer = AdamW(model.parameters(), lr=args.lr)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) 
 
-    if rank == 0:
-        logging.info("Loading Data ...")
+    Logger.log("Loading Data ...")
 
     train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, actual_batch_size, args.oversample, model_type)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
-    if rank == 0:
-        logging.info(f'Class weights {class_weights}')
+    Logger.log(f'Class weights {class_weights}')
 
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.2)
 
-    if rank == 0:
-        logging.info("Start Training ...")
+    Logger.log("Start Training ...")
 
     no_improvement = 0
 
@@ -292,7 +283,7 @@ def main():
         val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
         if rank == 0:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
-            logging.info(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
+            Logger.log(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}', None)
 
             average_f1 = (val_f1[0] + val_f1[1]) / 2
 
@@ -303,7 +294,7 @@ def main():
 
                 no_improvement = 0
                 model_path = f'{args.models_dir}/{run_name}.pth'
-                logging.info(f'Saving model to {model_path}')
+                Logger.log(f'Saving model to {model_path}', None)
                 torch.save({
                     'epoch': epoch,
                     'model': model.state_dict(), 
@@ -318,7 +309,7 @@ def main():
             else:
                 no_improvement += 1
                 if no_improvement >= 40:
-                    logging.info("No Loss And F1 improvement for 40 Epoch, exiting training")
+                    Logger.log("No Loss And F1 improvement for 40 Epoch, exiting training", None)
                     flag_tensor += 1
 
         dist.all_reduce(flag_tensor)
@@ -333,7 +324,7 @@ def main():
     test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
     if rank == 0:
         wandb.finish()
-        logging.info(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}')
+        Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
 
 
 if __name__ == "__main__":

@@ -121,7 +121,7 @@ class DinoFeatureClassifier(DinoFeature):
 
         return y_pixel.squeeze(2).squeeze(2)
 
-    def forward_step(self, images, labels, criterion, optimizer):
+    def step(self, images, labels, criterion, optimizer):
         output = self.forward(images)
         loss = criterion(output, labels.view(-1))
 

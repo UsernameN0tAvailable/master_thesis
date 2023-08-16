@@ -118,7 +118,7 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
         else: 
             test_data.push(split)
 
-    logging.info(f'SAMPLES COUNT:\ttrain: {len(train_data)}, val: {len(validation_data)}, test: {len(test_data)}')
+    Logger.log(f'Loaders: Train: {len(train_data)}, Val: {len(validation_data)}, Test: {len(test_data)}')
 
     weights = train_data.get_weights()
 
@@ -170,3 +170,13 @@ class Random90Rotation:
     def __call__(self, img):
         angle = random.choice([0, 90, 180, 270])
         return transforms.functional.rotate(img, angle)
+
+class Logger():
+    @staticmethod
+    def init(filename: str, level =logging.INFO):
+        logging.basicConfig(level=level, filemode='a', filename=filename)
+
+    @staticmethod
+    def log(val: str, rank: int = 0):
+        if rank is None or int(os.environ["LOCAL_RANK"]) == rank:
+            logging.info(val)

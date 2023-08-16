@@ -19,7 +19,6 @@ class BottomCNN(nn.Module):  # Not subclassing from nn.Sequential anymore
         self.maxpool2 = nn.MaxPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
-            
         x = self.conv1(x)
         x = self.relu1(x)
         x = self.maxpool1(x)
@@ -48,7 +47,6 @@ class BottomResNet(nn.Module):
 
 
     def forward(self, img, n: Optional[int] = 1):
-
         height = img.shape[2]
         width = img.shape[3]
 
