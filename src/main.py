@@ -274,6 +274,7 @@ def main():
 
         if flag_tensor == 1:
             break;
+        epoch += 1
 
     # test values
     model = model.to(device)
