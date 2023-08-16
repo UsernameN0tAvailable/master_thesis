@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from vit import DinoFeatureClassifier
+from models.dino import DinoFeatureClassifier
 
 import re
 
