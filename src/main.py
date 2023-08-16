@@ -32,14 +32,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         labels = labels.to(device)
 
         if optimizer is not None: optimizer.zero_grad()
-        output = model(images)['y_pixel'].squeeze(2).squeeze(2)
-
-        loss = criterion(output, labels.view(-1))
-
-        if optimizer is not None:
-            loss.backward()
-            optimizer.step()
-
+        output, loss = model.forward_step(images, labels, criterion, optimizer)
         running_loss += loss.item() * images.size(0)
 
         predicted = torch.max(output.data, 1)[1]
@@ -133,9 +126,10 @@ def create_model(param, lr: float, epochs: int, load_path: str):
             optimizer = AdamW(model.parameters(), lr=lr)
             scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
             return model, optimizer, scheduler, 0.0, float('inf'), 0, False
+    elif param['stream']:
+        raise ValueError(f'{param} Not Implemented')
     else:
-        print(param)
-        raise ValueError('Not Imlemented')
+        raise ValueError(f'{param} Not Implemented')
 
 
 

@@ -119,9 +119,16 @@ class DinoFeatureClassifier(DinoFeature):
         y_pixel = self.dropout(z)
         y_pixel = self.cluster(y_pixel)
 
-        results = {
-            'z_tokens': z,
-            'y_pixel': y_pixel,
-        }
+        return y_pixel.squeeze(2).squeeze(2)
 
-        return results
+    def forward_step(self, images, labels, criterion, optimizer):
+        output = self.forward(images)
+
+        loss = criterion(output, labels.view(-1))
+
+        if optimizer is not None:
+            loss.backward()
+            optimizer.step()
+
+        return output, loss
+

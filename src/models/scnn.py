@@ -22,6 +22,47 @@ from torch.nn.modules.utils import _pair
 
 from tqdm import tqdm
 
+class StreamingNet():
+    def __init__(self, top_net, bottom_net, tile_size: int):
+        self.top_net = top_net
+
+        for mod in self.top_net.modules():
+            if isinstance(mod, torch.nn.Conv2d):
+                torch.nn.init.kaiming_normal_(mod.weight, nonlinearity='relu')
+                mod.bias.data.fill_(0)
+
+        self.bottom_net = bottom_net
+        self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False)
+        self.scnn.enable() # enable streaming
+
+    def parameters(self):
+        return list(list(self.bottom_net.parameters()) + list(self.top_net.parameters()))
+
+    def to(self, device):
+        self.top_net = self.top_net.to(device)
+        self.bottom_net = self.bottom_net.to(device)
+        return self
+
+    def forward_step(self, images, labels, criterion, optimizer):
+        with torch.no_grad():
+            bottom_output = self.scnn.forward(images)
+        bottom_output.requires_grad = True
+        top_output = self.top_net(bottom_output)
+
+        loss = criterion(top_output, labels.view(-1))
+
+        if optimizer is not None:
+            loss.backward()
+            self.scnn.backward(images, bottom_output.grad)
+
+        return top_output, loss
+
+
+
+
+
+
+
 
 # from torch.nn.grad import _grad_input_padding
 
