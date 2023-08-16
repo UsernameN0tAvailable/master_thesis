@@ -21,6 +21,8 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
 import wandb
 
+import pynvml
+
 from pipeline_utils import PathsAndLabels, HotspotDataset, get_dataloaders
 
 
@@ -153,6 +155,7 @@ def main():
     parser.add_argument("--lr", type=float, required=True)
     parser.add_argument("--oversample", type=float, default=0.5)
     parser.add_argument("--test_only", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--base_mem", type=int, required=True) # memory of the biggest GPU in MB
 
     args = parser.parse_args()
 
@@ -171,6 +174,17 @@ def main():
 
     device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
 
+    print(device_count, device)
+
+    pynvml.nvmlInit()
+    # Assuming you want the memory info for the first GPU
+    handle = pynvml.nvmlDeviceGetHandleByIndex(rank)
+    info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+
+    batch_pct = (info.total / (1024 ** 2)) / args.base_mem
+
+    pynvml.nvmlShutdown()
+
     if rank == 0:
         logging.basicConfig(level = logging.INFO, filemode='a', filename=run_name)
         logging.info(f'Using device: {device}')
@@ -182,7 +196,7 @@ def main():
     if rank == 0:
         if not test_only:
             wandb.init(
-                    project=f'pT1',
+                    project=f'pT1 Test',
                     group=f'{args.type}',
                     name = f'cv{args.shift}',
                     config= {
