@@ -24,7 +24,8 @@ from pipeline_utils import get_dataloaders, Logger
 from torch.nn import SyncBatchNorm
 
 
-def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average="weighted"):
+def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, local_batch_size: int, tot_batch_size: int, average="weighted"):
+
     running_loss = torch.tensor(0.0, device=device)
     true = []
     preds = []
@@ -36,7 +37,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         if optimizer is not None: optimizer.zero_grad()
 
         output, loss = model.module.step(images, labels, criterion, optimizer is not None)
-        running_loss += loss.item() * images.size(0)
+        running_loss += loss.item()
         predicted = torch.max(output.data, 1)[1]
         
         true.extend(labels.cpu().numpy())
@@ -46,11 +47,18 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         optimizer.step()
         scheduler.step()
 
-    dist.reduce(running_loss, dst=0)
-    if rank == 0:
-        running_loss /= device_count
+    print("\nbef ", rank, running_loss)
 
-    epoch_loss = running_loss.item() / len(dataloader.dataset)
+    running_loss /= len(dataloader) 
+    running_loss *= local_batch_size
+
+    print("aft ", rank, running_loss)
+
+    dist.reduce(running_loss, dst=0, op=dist.ReduceOp.AVG)
+
+    print("aft reduce ", rank, running_loss)
+
+    epoch_loss = running_loss.item() / tot_batch_size
 
     true_tensor = torch.tensor(true, device=device)
     preds_tensor = torch.tensor(preds, device=device)
@@ -196,38 +204,41 @@ def main():
     parser.add_argument("--lr", type=float, required=True)
     parser.add_argument("--oversample", type=float, default=0.5)
     parser.add_argument("--test_only", type=int, default=0, choices=[0, 1])
-    parser.add_argument("--base_mem", type=int, required=True) # memory of the biggest GPU in MB
 
     args = parser.parse_args()
 
     model_type = validate_model_and_extract(args.type)
     test_only = args.test_only == 1
 
-    run_name = f'{args.type}_shift_{args.shift}_batch_size_{args.batch_size}_oversample_{args.oversample}'
-    checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
     rank = int(os.environ["LOCAL_RANK"])
 
-
     device_count = torch.cuda.device_count()
-
     device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
 
+
     pynvml.nvmlInit()
-    # Assuming you want the memory info for the first GPU
     handle = pynvml.nvmlDeviceGetHandleByIndex(rank)
-    info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-
-    batch_pct = (info.total / (1024 ** 2)) / args.base_mem
-
-    actual_batch_size = int(batch_pct * args.batch_size)
-
+    local_gpu_memory = int(pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024 ** 2))
     pynvml.nvmlShutdown()
 
+    tot_gpu_memory = torch.tensor(local_gpu_memory, dtype=torch.int, device=device)
+    dist.all_reduce(tot_gpu_memory, op=dist.ReduceOp.SUM)
+
+    local_batch_size = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
+    tot_batch_size = torch.tensor(local_batch_size, dtype=torch.int, device=device)
+    dist.all_reduce(tot_batch_size, op=dist.ReduceOp.SUM)
+    tot_batch_size = tot_batch_size.item()
+
+    run_name = f'{args.type}_shift_{args.shift}_batch_size_{tot_batch_size}_oversample_{args.oversample}'
+    checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
+
+
     Logger.init(run_name)
-    Logger.log(f'Using device: {device} with batch size: {actual_batch_size}', None)
+    Logger.log(f'Tot Batch Size: {tot_batch_size}')
+    Logger.log(f'Using device: {device} with batch size: {local_batch_size}', None)
 
 
     model, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath, device)
@@ -260,7 +271,7 @@ def main():
 
     Logger.log("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, actual_batch_size, args.oversample, model_type)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
@@ -278,9 +289,9 @@ def main():
 
     while epoch < epochs:
         model.train()
-        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
+        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, local_batch_size, tot_batch_size)
         model.eval()
-        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
+        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, local_batch_size, tot_batch_size, average=None)
         if rank == 0:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             Logger.log(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}', None)

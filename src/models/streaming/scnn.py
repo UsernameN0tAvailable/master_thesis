@@ -55,17 +55,10 @@ class StreamingNet(torch.nn.Module):
 
 # from torch.nn.grad import _grad_input_padding
 
-if '1.6' in torch.__version__: # type:ignore
-    def forward_amp_decorator(func): 
-        return torch.cuda.amp.custom_fwd(func)  # type:ignore
-    def backward_amp_decorator(func): 
-        return torch.cuda.amp.custom_bwd(func)  # type:ignore
-    from torch.cuda.amp import autocast
-else:
-    def forward_amp_decorator(func): 
-        return func
-    def backward_amp_decorator(func):
-        return func
+def forward_amp_decorator(func): 
+    return func
+def backward_amp_decorator(func):
+    return func
 
 
 # inspired by torch/nn/modules/utils.py

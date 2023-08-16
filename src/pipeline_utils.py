@@ -128,7 +128,7 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
             train_data.get_dataset(
                 batch_size,
                 transforms.Compose([
-                    transforms.RandomCrop(crop_size) if model_type['type'] == 'vit' else transforms.CenterCrop(crop_size),
+                    transforms.RandomCrop(crop_size) if model_type['type'] == 'vit' else transforms.CenterCrop(3600),
                     Random90Rotation(), 
                     transforms.RandomHorizontalFlip(), 
                     transforms.RandomVerticalFlip(), 
@@ -142,14 +142,14 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
                 validation_data.get_dataset(
                     batch_size,
                     transforms.Compose([
-                    transforms.CenterCrop(crop_size),
+                    transforms.CenterCrop(crop_size if model_type['type'] == 'vit' else 3600),
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ])),
                 test_data.get_dataset(
                     batch_size,
                     transforms.Compose([
-                    transforms.CenterCrop(crop_size),
+                    transforms.CenterCrop(crop_size if model_type['type'] == 'vit' else 3600),
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ])),
