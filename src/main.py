@@ -7,7 +7,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from models.dino import DinoFeatureClassifier
 from models.streaming.top import TopCNN
-from models.streaming.bottom import BottomCNN, BottomVit
+from models.streaming.bottom import BottomCNN, BottomVit, BottomResNet
 from models.streaming.scnn import StreamingNet
 
 import re
@@ -151,7 +151,7 @@ def create_model(param, lr: float, epochs: int, load_path: str, device: str):
         elif bottom_param == 'vit':
             bottom_net = BottomVit()
         elif bottom_param == 'resnet':
-            bottom_net = BottomCNN()
+            bottom_net = BottomResNet()
         elif bottom_param == 'unet':
             bottom_net = BottomCNN()
         else:
