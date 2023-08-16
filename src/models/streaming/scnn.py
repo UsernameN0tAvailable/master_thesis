@@ -23,6 +23,11 @@ from torch.nn.modules.utils import _pair
 from tqdm import tqdm
 
 class StreamingNet(torch.nn.Module):
+
+    def to(self, device):
+        self.top_net.to(device)
+        self.bottom_net.to(device)
+        return self
  
     def __init__(self, top_net, bottom_net, tile_size: int):
         super().__init__()

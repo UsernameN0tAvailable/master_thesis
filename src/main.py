@@ -226,7 +226,9 @@ def main():
     all_loads[rank] = torch.tensor(local_gpu_load_per_batch, dtype=torch.float32, device=device)
     dist.all_reduce(all_loads, op=dist.ReduceOp.SUM)
 
-    aggr_gpu = int( all_loads.argmin().item())
+    aggr_gpu = int(all_loads.argmin().item())
+
+    torch.cuda.set_device(aggr_gpu)
 
     Logger.init(run_name, aggr_gpu)
     Logger.log(f'Tot Batch Size: {tot_batch_size}')
