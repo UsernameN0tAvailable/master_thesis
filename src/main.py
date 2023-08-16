@@ -92,20 +92,21 @@ def validate_model_and_extract(s):
             raise ValueError(f"Invalid value for 'vit': {number}. It must be a positive integer divisible by 16.")
 
     # Check for stream[m, n] format
-    stream_match = re.match(r'^stream\[(vit|cnn|resnet), (\d+)\]$', s)
+    stream_match = re.match(r'^stream\[(vit|cnn|resnet|unet)->(vit|cnn|resnet|unet), (\d+)\]$', s)
     if stream_match:
-        m = stream_match.group(1)
-        n = int(stream_match.group(2))
+        top_m = stream_match.group(1)
+        bottom_m = stream_match.group(2)
+        n = int(stream_match.group(3))
 
         if n <= 0:
             raise ValueError(f"Invalid value for 'n': {n}. It must be a positive integer.")
         
-        if m == "vit" and n % 16 != 0:
-            raise ValueError(f"Invalid combination: stream[{m}, {n}]. When 'm' is 'vit', 'n' must be divisible by 16.")
+        if (top_m == "vit" or bottom_m == "vit") and n % 16 != 0:
+            raise ValueError(f"Invalid combination: stream[{top_m}|{bottom_m}, {n}]. When 'm' is 'vit', 'n' must be divisible by 16.")
         
-        return {'type': 'stream', 'subtype': m, 'value': n}
+        return {'type': 'stream', 'top': top_m, 'bottom': bottom_m, 'value': n}
 
-    raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet>, <patch_size>]")
+    raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]")
 
 
 def create_model(param, lr: float, epochs: int, load_path: str):
@@ -133,6 +134,7 @@ def create_model(param, lr: float, epochs: int, load_path: str):
             scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
             return model, optimizer, scheduler, 0.0, float('inf'), 0, False
     else:
+        print(param)
         raise ValueError('Not Imlemented')
 
 
