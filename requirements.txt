@@ -4,5 +4,4 @@ numpy
 pillow
 scikit-learn
 tqdm
-pynvml
 wandb
