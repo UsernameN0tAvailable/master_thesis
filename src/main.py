@@ -188,6 +188,7 @@ def main():
     parser.add_argument("--lr", type=float, required=True)
     parser.add_argument("--oversample", type=float, default=0.5)
     parser.add_argument("--test_only", type=int, default=0, choices=[0, 1])
+    parser.add_argument("--main_device", type=int, required=False)
 
     args = parser.parse_args()
 
@@ -219,8 +220,6 @@ def main():
     dist.all_reduce(tot_batch_size, op=dist.ReduceOp.SUM)
     tot_batch_size = tot_batch_size.item()
 
-    run_name = f'{args.type}_shift_{args.shift}_batch_size_{tot_batch_size}_oversample_{args.oversample}'
-    checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
 
     # Select GPU with lowest load to aggregate results
     local_gpu_load = 1 / (local_gpu_memory / local_batch_size)
@@ -239,20 +238,25 @@ def main():
     dist.all_reduce(all_relative_free_loads, op=dist.ReduceOp.SUM)
 
     loads_mean = all_relative_free_loads.mean().item()
-    main_gpu = all_relative_free_loads.argmax().item()
-    main_gpu_load = all_relative_free_loads[main_gpu].item()
 
+    main_gpu = args.main_device
 
-    if abs(main_gpu_load - loads_mean) < 0.000001:
-        main_gpu = int(all_local_gpu_memories.argmax().item())
+    if main_gpu is None:
+        main_gpu = all_relative_free_loads.argmax().item()
+        main_gpu_load = all_relative_free_loads[main_gpu].item()
+
+        if abs(main_gpu_load - loads_mean) < 0.01:
+            main_gpu = int(all_local_gpu_memories.argmax().item())
 
     if main_gpu == rank and local_gpu_memory > all_local_gpu_memories.min().item():
-        local_batch_size += 1
+        local_batch_size += 2 
 
     tot_batch_size = torch.tensor(local_batch_size, dtype=torch.int64, device=device)
     dist.all_reduce(tot_batch_size, op=dist.ReduceOp.SUM) 
     tot_batch_size = tot_batch_size.item()
 
+    run_name = f'{args.type}_shift_{args.shift}_batch_size_{tot_batch_size}_oversample_{args.oversample}'
+    checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
 
     torch.cuda.set_device(main_gpu)
 
