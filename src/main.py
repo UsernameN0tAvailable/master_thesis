@@ -292,8 +292,10 @@ def main():
 
     while epoch < epochs:
         model.train()
+        train_dataloader.sampler.set_epoch(epoch)
         train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
         model.eval()
+        val_dataloader.sampler.set_epoch(epoch)
         val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
         if rank == main_gpu:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
@@ -335,6 +337,7 @@ def main():
     # test values
     model = model.to(device)
     model.eval() 
+    test_dataloader.sampler.set_epoch(epoch)
     test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
     if rank == main_gpu:
         wandb.finish()
