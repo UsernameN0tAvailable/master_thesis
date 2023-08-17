@@ -50,7 +50,6 @@ class PathsAndLabels():
         if self.label_distribution[0] == 0 and self.label_distribution[1] == 0:
             raise ValueError("Class Frequencies not counted!")
         else:
-            tot_unique_samples = self.label_distribution[0] + self.label_distribution[1]
             return 1 / (np.array(self.label_distribution, dtype=float) * 2)
 
     def push(self, split: Dict[str, List[str]], oversample: float = 0.0):
@@ -77,7 +76,7 @@ class PathsAndLabels():
             oversample_l = ((neg_l / (( 1.0 - oversample) * 10) ) * 10 - neg_l)
 
             # over sampling
-            for n_i in range(int(oversample_l)):
+            for _ in range(int(oversample_l)):
                 pos_i = int(random.uniform(0.0, float(pos_l - 1)))
                 self.add_sample(positives[pos_i], '1')
 
@@ -93,7 +92,7 @@ class PathsAndLabels():
 
     def get_dataset(self, batch_size: int, transform) -> DataLoader:
         dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
-        sampler = DistributedSampler(dataset, shuffle=False)
+        sampler = DistributedSampler(dataset, shuffle=True)
         return DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=True)
 
 def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type):
