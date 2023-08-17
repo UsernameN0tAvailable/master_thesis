@@ -229,7 +229,7 @@ def main():
     free_memory_per_gpu = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
 
     for r, m in enumerate(free_memory_per_gpu):
-        if (smallest_mem_per_sample - 100) <= m:
+        if (smallest_mem_per_sample * (all_local_gpu_memories[r].item() / tot_gpu_memory) ) <= m:
             free_memory_per_gpu[r] -= smallest_mem_per_sample
             tot_batch_size += 1
             if r == rank:
