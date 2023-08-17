@@ -44,7 +44,8 @@ class StreamingNet(torch.nn.Module):
 
     def step(self, images, labels, criterion, is_train: bool):
         with torch.no_grad():
-            bottom_output = self.scnn.forward(images)
+            bottom_output = self.scnn.forward(images, result_on_cpu=False)
+        torch.cuda.empty_cache()
         bottom_output.requires_grad = True 
         top_output = self.top_net(bottom_output)
 
@@ -408,6 +409,7 @@ class StreamingCNN(object):
         # Forward pass with grads enabled
         torch.set_grad_enabled(True)
         output = self.stream_module(tile)
+        torch.cuda.empty_cache()
 
         # Gather backward statistics
         self._tile_output_shape = output.shape
@@ -431,6 +433,7 @@ class StreamingCNN(object):
     def _gather_forward_statistics(self, tile):
         torch.set_grad_enabled(False)
         output = self.stream_module(tile)
+        torch.cuda.empty_cache()
         self.tile_output_lost = self._non_max_border_amount(output)
         if self.verbose: print('\n', 'Output lost', self.tile_output_lost)
 
@@ -624,6 +627,7 @@ class StreamingCNN(object):
 
                     if self.should_normalize: tile = self._normalize_on_gpu(tile)
                     tile_output = self.stream_module(tile)
+                    torch.cuda.empty_cache()
 
                     trimmed_output = tile_output[:, :,
                                                  lost.top:tile_output.shape[H_DIM] - lost.bottom,
@@ -647,7 +651,7 @@ class StreamingCNN(object):
         del image
         self._saved_tensors = {}
 
-        return output
+        return output.to(self.device)
 
     def backward(self, image, grad):
         """Perform backward pass with streaming.

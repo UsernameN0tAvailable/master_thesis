@@ -246,6 +246,14 @@ def main():
     if abs(main_gpu_load - loads_mean) < 0.000001:
         main_gpu = int(all_local_gpu_memories.argmax().item())
 
+    if main_gpu == rank and local_gpu_memory > all_local_gpu_memories.min().item():
+        local_batch_size += 1
+
+    tot_batch_size = torch.tensor(local_batch_size, dtype=torch.int64, device=device)
+    dist.all_reduce(tot_batch_size, op=dist.ReduceOp.SUM) 
+    tot_batch_size = tot_batch_size.item()
+
+
     torch.cuda.set_device(main_gpu)
 
     Logger.init(run_name, main_gpu)

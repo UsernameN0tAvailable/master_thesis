@@ -94,7 +94,7 @@ class PathsAndLabels():
     def get_dataset(self, batch_size: int, transform) -> DataLoader:
         dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
         sampler = DistributedSampler(dataset, shuffle=False)
-        return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+        return DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=True)
 
 def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
