@@ -79,7 +79,7 @@ class Vit(BackboneNet):
             feat_tokens = feat_tokens[0]
             out = out[0]
 
-        return super(BackboneNet, self).forward(out, height, width)
+        return super(Vit, self).forward(out, height, width)
 
 
 class ResNet(BackboneNet):
