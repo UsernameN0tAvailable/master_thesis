@@ -256,7 +256,7 @@ def main():
     if rank == main_gpu:
         if not test_only:
             wandb.init(
-                    project=f'pT1 Eval',
+                    project=f'pT1',
                     group=f'{args.type}',
                     name = f'cv{args.shift}',
                     config= {
