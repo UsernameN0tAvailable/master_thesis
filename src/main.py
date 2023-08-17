@@ -44,7 +44,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
             optimizer.step()
             scheduler.step()
 
-    dist.all_reduce(running_loss, op=dist.ReduceOp.SUM)
+    dist.all_reduce(running_loss, op=dist.ReduceOp.AVG)
     epoch_loss = running_loss.item() / tot_batch_size
 
     true_tensor = torch.tensor(true, device=device)
