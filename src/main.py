@@ -21,7 +21,7 @@ from pipeline_utils import get_dataloaders, Logger
 from torch.nn import SyncBatchNorm
 
 
-def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, tot_batch_size: int, average="weighted"):
+def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average="weighted"):
 
     running_loss = torch.tensor(0.0, device=device)
     true = []
@@ -45,7 +45,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
             scheduler.step()
 
     dist.all_reduce(running_loss, op=dist.ReduceOp.AVG)
-    epoch_loss = running_loss.item() / tot_batch_size
+    epoch_loss = running_loss.item() / len(dataloader.dataset)
 
     true_tensor = torch.tensor(true, device=device)
     preds_tensor = torch.tensor(preds, device=device)
@@ -292,9 +292,9 @@ def main():
 
     while epoch < epochs:
         model.train()
-        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, tot_batch_size)
+        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
         model.eval()
-        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, tot_batch_size, average=None)
+        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
         if rank == main_gpu:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             Logger.log(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}', None)
