@@ -21,7 +21,7 @@ from pipeline_utils import get_dataloaders, Logger
 from torch.nn import SyncBatchNorm
 
 
-def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, local_batch_size: int, tot_batch_size: int, average="weighted"):
+def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, tot_batch_size: int, average="weighted"):
 
     running_loss = torch.tensor(0.0, device=device)
     true = []
@@ -34,18 +34,15 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         if optimizer is not None: optimizer.zero_grad()
 
         output, loss = model.module.step(images, labels, criterion, optimizer is not None)
-        running_loss += loss.item()
+        running_loss += loss.item() * images.size(0)
         predicted = torch.max(output.data, 1)[1]
         
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
 
-    if optimizer is not None:
-        optimizer.step()
-        scheduler.step()
-
-    running_loss /= len(dataloader) 
-    running_loss *= local_batch_size
+        if optimizer is not None:
+            optimizer.step()
+            scheduler.step()
 
     dist.reduce(running_loss, dst=Logger.logging_rank, op=dist.ReduceOp.AVG)
 
@@ -296,9 +293,9 @@ def main():
 
     while epoch < epochs:
         model.train()
-        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, local_batch_size, tot_batch_size)
+        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, tot_batch_size)
         model.eval()
-        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, local_batch_size, tot_batch_size, average=None)
+        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, tot_batch_size, average=None)
         if rank == main_gpu:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             Logger.log(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}', None)
