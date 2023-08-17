@@ -207,8 +207,11 @@ def main():
     local_gpu_memory = int(pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024 ** 2))
     pynvml.nvmlShutdown()
 
-    tot_gpu_memory = torch.tensor(local_gpu_memory, dtype=torch.int, device=device)
-    dist.all_reduce(tot_gpu_memory, op=dist.ReduceOp.SUM)
+    all_local_gpu_memories = torch.zeros(device_count, dtype=torch.int64, device=device) 
+    all_local_gpu_memories[rank] = torch.tensor(local_gpu_memory, dtype=torch.int64, device=device)
+
+    dist.all_reduce(all_local_gpu_memories, op=dist.ReduceOp.SUM)
+    tot_gpu_memory = all_local_gpu_memories.sum().item()
 
     local_batch_size = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
 
@@ -220,19 +223,34 @@ def main():
     checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
 
     # Select GPU with lowest load to aggregate results
-    local_gpu_load_per_batch = 1 / (local_gpu_memory / local_batch_size)
+    local_gpu_load = 1 / (local_gpu_memory / local_batch_size)
 
     all_loads = torch.zeros(device_count, dtype=torch.float32, device=device) 
-    all_loads[rank] = torch.tensor(local_gpu_load_per_batch, dtype=torch.float32, device=device)
+
+    all_loads[rank] = torch.tensor(local_gpu_load, dtype=torch.float32, device=device)
+
     dist.all_reduce(all_loads, op=dist.ReduceOp.SUM)
 
-    aggr_gpu = int(all_loads.argmin().item())
+    lowest_load_index =  int(all_loads.argmin())
+    lowest_load = all_loads[lowest_load_index].item()
+    all_relative_free_loads = torch.zeros(device_count, dtype=torch.float32, device=device) 
+    relative_load = (local_gpu_load - lowest_load) * (local_gpu_memory / local_batch_size)
+    all_relative_free_loads[rank] = torch.tensor(relative_load, dtype=torch.float32, device=device) 
+    dist.all_reduce(all_relative_free_loads, op=dist.ReduceOp.SUM)
 
-    torch.cuda.set_device(aggr_gpu)
+    loads_mean = all_relative_free_loads.mean().item()
+    main_gpu = all_relative_free_loads.argmax().item()
+    main_gpu_load = all_relative_free_loads[main_gpu].item()
 
-    Logger.init(run_name, aggr_gpu)
+
+    if abs(main_gpu_load - loads_mean) < 0.000001:
+        main_gpu = int(all_local_gpu_memories.argmax().item())
+
+    torch.cuda.set_device(main_gpu)
+
+    Logger.init(run_name, main_gpu)
     Logger.log(f'Tot Batch Size: {tot_batch_size}')
-    Logger.log(f'Aggregate Results at GPU: {aggr_gpu}')
+    Logger.log(f'Aggregate Results at GPU: {main_gpu}')
     Logger.log(f'Using device: {device} with batch size: {local_batch_size}', None)
 
 
@@ -241,7 +259,7 @@ def main():
     model = model.to(device)
 
 
-    if rank == aggr_gpu:
+    if rank == main_gpu:
         if not test_only:
             wandb.init(
                     project=f'pT1 Eval',
@@ -287,7 +305,7 @@ def main():
         train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count, local_batch_size, tot_batch_size)
         model.eval()
         val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, local_batch_size, tot_batch_size, average=None)
-        if rank == aggr_gpu:
+        if rank == main_gpu:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             Logger.log(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}', None)
 
@@ -328,7 +346,7 @@ def main():
     model = model.to(device)
     model.eval() 
     test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
-    if rank == aggr_gpu:
+    if rank == main_gpu:
         wandb.finish()
         Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
 
