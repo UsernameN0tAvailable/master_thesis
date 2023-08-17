@@ -210,36 +210,27 @@ def main():
     tot_gpu_memory = all_local_gpu_memories.sum().item()
 
     local_batch_size = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
-
+ 
     tot_batch_size = torch.tensor(local_batch_size, dtype=torch.int, device=device)
     dist.all_reduce(tot_batch_size, op=dist.ReduceOp.SUM)
     tot_batch_size = tot_batch_size.item()
 
-
     # Select GPU with lowest load to aggregate results
-    local_gpu_load = 1 / (local_gpu_memory / local_batch_size)
+    local_mem_per_sample =  local_gpu_memory / local_batch_size
 
-    all_loads = torch.zeros(device_count, dtype=torch.float32, device=device) 
+    all_mems_per_sample = torch.zeros(device_count, dtype=torch.float32, device=device) 
+    all_mems_per_sample[rank] = torch.tensor(local_mem_per_sample, dtype=torch.float32, device=device)
 
-    all_loads[rank] = torch.tensor(local_gpu_load, dtype=torch.float32, device=device)
+    dist.all_reduce(all_mems_per_sample, op=dist.ReduceOp.SUM)
 
-    dist.all_reduce(all_loads, op=dist.ReduceOp.SUM)
+    smallest_mem_per_sample_index =  int(all_mems_per_sample.argmin())
+    smallest_mem_per_sample = float(all_mems_per_sample[smallest_mem_per_sample_index].item())
 
-    lowest_load_index =  int(all_loads.argmin())
-    lowest_load = all_loads[lowest_load_index].item()
-    all_relative_free_loads = torch.zeros(device_count, dtype=torch.float32, device=device) 
-    relative_load = (local_gpu_load - lowest_load) * (local_gpu_memory / local_batch_size)
-    all_relative_free_loads[rank] = torch.tensor(relative_load, dtype=torch.float32, device=device) 
-    dist.all_reduce(all_relative_free_loads, op=dist.ReduceOp.SUM)
+    free_memory_per_gpu = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
 
-    loads_mean = all_relative_free_loads.mean().item()
-
-
-    main_gpu = all_relative_free_loads.argmax().item()
-    main_gpu_load = all_relative_free_loads[main_gpu].item()
-
-    if abs(main_gpu_load - loads_mean) < 0.01:
-        main_gpu = int(all_local_gpu_memories.argmax().item())
+    freest_gpu_rank = free_memory_per_gpu.index(max(free_memory_per_gpu))
+    
+    main_gpu = freest_gpu_rank
 
     run_name = f'{args.type}_shift_{args.shift}_batch_size_{tot_batch_size}_oversample_{args.oversample}'
     checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
