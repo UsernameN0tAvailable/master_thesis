@@ -228,9 +228,15 @@ def main():
 
     free_memory_per_gpu = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
 
-    freest_gpu_rank = free_memory_per_gpu.index(max(free_memory_per_gpu))
-    
-    main_gpu = freest_gpu_rank
+    for r, m in enumerate(free_memory_per_gpu):
+        if (smallest_mem_per_sample - 100) <= m:
+            free_memory_per_gpu[r] -= smallest_mem_per_sample
+            tot_batch_size += 1
+            if r == rank:
+                local_batch_size += 1
+
+    # aggregating GPU always the one with the most space 
+    main_gpu = free_memory_per_gpu.index(max(free_memory_per_gpu))
 
     run_name = f'{args.type}_shift_{args.shift}_batch_size_{tot_batch_size}_oversample_{args.oversample}'
     checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
