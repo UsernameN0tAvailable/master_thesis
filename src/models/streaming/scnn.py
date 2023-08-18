@@ -51,7 +51,7 @@ class StreamingNet(torch.nn.Module):
 
         loss = criterion(top_output, labels.view(-1))
 
-        if is_train is not None:
+        if is_train:
             loss.backward()
             self.scnn.backward(images, bottom_output.grad)
 

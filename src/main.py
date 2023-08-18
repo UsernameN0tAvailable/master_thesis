@@ -43,6 +43,7 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         if optimizer is not None:
             optimizer.step()
             scheduler.step()
+            optimizer.zero_grad() 
 
     dist.all_reduce(running_loss, op=dist.ReduceOp.AVG)
     epoch_loss = running_loss.item() / len(dataloader.dataset)
