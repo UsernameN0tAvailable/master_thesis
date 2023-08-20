@@ -3,5 +3,4 @@ torchvision
 numpy
 pillow
 scikit-learn
-tqdm
 wandb

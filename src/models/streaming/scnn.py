@@ -20,8 +20,6 @@ import collections.abc as container_abcs
 from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.utils import _pair
 
-from tqdm import tqdm
-
 class StreamingNet(torch.nn.Module):
 
     def to(self, device):
@@ -579,7 +577,6 @@ class StreamingCNN(object):
             self.saliency_map = torch.zeros(image.shape, dtype=self.dtype, device=self.device)
 
         if self.verbose: print('Number of tiles in forward:', n_rows * n_cols)
-        if self.verbose: iterator = tqdm(range(n_rows))
         else: iterator = range(n_rows)
 
         with torch.no_grad():
@@ -701,7 +698,6 @@ class StreamingCNN(object):
         self._backward_seen_indices = {}
 
         if self.verbose: print('Number of tiles in backprop:', n_rows * n_cols)
-        if self.verbose: iterator = tqdm(range(n_rows))
         else: iterator = range(n_rows)
 
         for row in iterator:
