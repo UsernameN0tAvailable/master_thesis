@@ -295,6 +295,8 @@ def main():
 
     epochs = 0 if test_only else 10000 
 
+    best_model_dict = None
+
     while epoch < epochs:
         model.train()
         train_dataloader.sampler.set_epoch(epoch)
@@ -308,30 +310,31 @@ def main():
 
             average_f1 = (val_f1[0] + val_f1[1]) / 2
 
-            if  best_loss > val_loss or average_f1 > best_f1: 
+            if best_model_dict is None or best_loss > val_loss or average_f1 > best_f1: 
 
                 best_loss = val_loss if best_loss > val_loss else best_loss
                 best_f1 = average_f1 if average_f1 > best_f1 else best_f1
+                best_model_dict = model.state_dict()
 
                 no_improvement = 0
-                model_path = f'{args.models_dir}/{run_name}.pth'
-                Logger.log(f'Saving model to {model_path}', None)
-                torch.save({
-                    'epoch': epoch,
-                    'model': model.state_dict(), 
-                    'optimizer': optimizer.state_dict(),
-                    'scheduler': scheduler.state_dict(),
-                    'best_f1': best_f1,
-                    'best_loss': best_loss,
-                    },
-                    model_path 
-                    )
-                wandb.save(model_path)
             else:
                 no_improvement += 1
                 if no_improvement >= 40:
                     Logger.log("No Loss And F1 improvement for 40 Epoch, exiting training", None)
                     flag_tensor += 1
+
+            model_path = f'{args.models_dir}/{run_name}.pth'
+            torch.save({
+                'epoch': epoch,
+                'model': best_model_dict, 
+                'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict(),
+                'best_f1': best_f1,
+                'best_loss': best_loss,
+                },
+                model_path 
+            )
+            wandb.save(model_path)
 
         dist.all_reduce(flag_tensor)
 
