@@ -252,11 +252,13 @@ def main():
 
     model, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath, device)
 
+
     model = model.to(device)
 
     if rank == main_gpu:
         if not test_only:
             wandb.init(
+                    id=run_name,
                     project=f'pT1',
                     group=f'{args.type}',
                     name = f'cv{args.shift}',
