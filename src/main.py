@@ -339,7 +339,7 @@ def main():
     model = model.to(device)
     model.eval() 
     test_dataloader.sampler.set_epoch(epoch)
-    test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
+    test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, average=None)
     if rank == main_gpu:
         wandb.finish()
         Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
