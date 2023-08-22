@@ -84,7 +84,7 @@ def validate_model_and_extract(s):
             raise ValueError(f"Invalid value for 'vit': {number}. It must be a positive integer divisible by 16.")
 
     # Check for stream[m, n] format
-    stream_match = re.match(r'^stream\[(vit|cnn|resnet|unet)->(vit|cnn|resnet|unet), (\d+)\]$', s)
+    stream_match = re.match(r'^stream\[(vit|cnn|resnet)->(vit|cnn|resnet|vit\[U\]|resnet\[U\]), (\d+)\]$', s)
     if stream_match:
         top_m = stream_match.group(1)
         bottom_m = stream_match.group(2)
@@ -93,7 +93,7 @@ def validate_model_and_extract(s):
         if n <= 0:
             raise ValueError(f"Invalid value for 'n': {n}. It must be a positive integer.")
         
-        if (top_m == "vit" or bottom_m == "vit") and n % 16 != 0:
+        if n % 16 != 0:
             raise ValueError(f"Invalid combination: stream[{top_m}|{bottom_m}, {n}]. When 'm' is 'vit', 'n' must be divisible by 16.")
         
         return {'type': 'stream', 'top': top_m, 'bottom': bottom_m, 'value': n}
@@ -140,8 +140,12 @@ def create_model(param, lr: float, epochs: int, load_path: str, device: str):
             bottom_net = BottomCNN()
         elif bottom_param == 'vit':
             bottom_net = Vit(32)
+        elif bottom_param == 'vit[U]':
+            bottom_net = Vit(32, False)
         elif bottom_param == 'resnet':
             bottom_net = ResNet(32)
+        elif bottom_param == 'resnet[U]':
+            bottom_net = ResNet(32, False)
         else:
             raise ValueError(f'No {bottom_param} bottom net available!!')
 

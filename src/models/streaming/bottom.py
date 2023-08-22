@@ -30,12 +30,12 @@ class BottomCNN(nn.Module):  # Not subclassing from nn.Sequential anymore
  
         return x
 
-
 class BackboneNet(nn.Module):
     def __init__(
             self,
             backbone,
-            out_channels
+            out_channels,
+            backbone_frozen: bool = True
     ):
         super().__init__()
 
@@ -44,7 +44,7 @@ class BackboneNet(nn.Module):
         parameters = list(self.backbone.parameters())
 
         for param in parameters:
-            param.requires_grad = False
+            param.requires_grad = not backbone_frozen 
 
         last_layer_size = parameters[-1].shape[0]
 
@@ -58,11 +58,9 @@ class BackboneNet(nn.Module):
         x = torch.nn.functional.interpolate(x, size=(height, width), mode="bilinear", align_corners=False)
         return self.resize_net(x)
 
-
-
 class Vit(BackboneNet):
-    def __init__(self, out_channels):
-        super(Vit, self).__init__(torch.hub.load('facebookresearch/dino:main', 'dino_vits16'), out_channels)
+    def __init__(self, out_channels, backbone_frozen: bool = True):
+        super(Vit, self).__init__(torch.hub.load('facebookresearch/dino:main', 'dino_vits16'), out_channels, backbone_frozen=backbone_frozen)
 
     def forward(self, img, n: Optional[int] = 1):
 
@@ -83,8 +81,8 @@ class Vit(BackboneNet):
 
 
 class ResNet(BackboneNet):
-    def __init__(self, out_channels):
-        super(ResNet, self).__init__(resnet50(weights=ResNet50_Weights.IMAGENET1K_V2), out_channels)
+    def __init__(self, out_channels, backbone_frozen: bool = True):
+        super(ResNet, self).__init__(resnet50(weights=ResNet50_Weights.IMAGENET1K_V2), out_channels, backbone_frozen=backbone_frozen)
 
     def forward(self, img):
         height = img.shape[2]
