@@ -1,182 +1,350 @@
-from vit import DinoFeatureClassifier
 import os
-import json
-import torch
-from torch import nn
-from torch.utils.data import Subset, DataLoader, TensorDataset, Dataset
-from torchvision import transforms
-from PIL import Image
 import argparse
-from typing import Optional;
+from sklearn.metrics import precision_recall_fscore_support
+import torch
+from torch import Value, nn
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from models.dino import DinoFeatureClassifier
+from models.streaming.top import TopCNN
+from models.streaming.bottom import BottomCNN, Vit, ResNet
+from models.streaming.scnn import StreamingNet
 
-best_validation_loss = float("inf")
- 
-class CustomImageDataset(Dataset):
-    def __init__(self, image_paths, labels, transform=None):
-        self.image_paths = image_paths
-        self.labels = labels
-        self.transform = transform
+import re
 
-    def __len__(self):
-        return len(self.image_paths)
+# distribute
+from torch.nn.parallel import DistributedDataParallel
+import torch.distributed as dist
+import wandb
+from pipeline_utils import get_dataloaders, Logger
 
-    def __getitem__(self, idx):
-        img_path = self.image_paths[idx]
-        label = self.labels[idx]
-        img = Image.open(img_path).convert('RGB')
-
-        if self.transform:
-            img = self.transform(img)
-
-        return img, label
+from torch.nn import SyncBatchNorm
 
 
-def get_optimizer(model, id: Optional[int]):
-    if id is None:
-        raise ValueError("Should specify an optimizer")
+def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average="weighted"):
 
-    match id:
-        case 0:
-            return torch.optim.SGD(model.parameters(), lr=0.01)
-        case 1:
-            return torch.optim.RMSprop(model.parameters(), lr=0.01)
-        case 2: 
-            return torch.optim.Adam(model.parameters(), lr=0.01)
-        case other:
-            raise ValueError("optimizer value not allowed")
+    running_loss = torch.tensor(0.0, device=device)
+    true = []
+    preds = []
 
-def f1_score(true_labels, predicted_labels):
-    true_positives = (true_labels * predicted_labels).sum().float()
-    false_positives = ((1 - true_labels) * predicted_labels).sum().float()
-    false_negatives = (true_labels * (1 - predicted_labels)).sum().float()
+    for images, labels in dataloader:
+        labels = labels.to(device)
+        images = images.to(device)
 
-    precision = true_positives / (true_positives + false_positives)
-    recall = true_positives / (true_positives + false_negatives)
+        if optimizer is not None: optimizer.zero_grad()
 
-    f1 = 2 * ((precision * recall) / (precision + recall))
-    return f1
+        output, loss = model.module.step(images, labels, criterion, optimizer is not None)
+        running_loss += loss.item() * images.size(0)
+        predicted = torch.max(output.data, 1)[1]
+        
+        true.extend(labels.cpu().numpy())
+        preds.extend(predicted.cpu().numpy())
+
+        if optimizer is not None:
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad() 
+
+    dist.all_reduce(running_loss, op=dist.ReduceOp.AVG)
+    epoch_loss = running_loss.item() / len(dataloader.dataset)
+
+    true_tensor = torch.tensor(true, device=device)
+    preds_tensor = torch.tensor(preds, device=device)
+
+    gathered_true_tensors = [torch.zeros_like(true_tensor) for _ in range(device_count)]
+    gathered_preds_tensors = [torch.zeros_like(preds_tensor) for _ in range(device_count)]
+
+    dist.all_gather(gathered_true_tensors, true_tensor)
+    dist.all_gather(gathered_preds_tensors, preds_tensor)
+
+    if rank == Logger.logging_rank:
+        gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
+        gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
+        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=average, zero_division=0.0)
+        return epoch_loss, precision, recall, f1
+
+    return None, None, None, None
 
 
+# validation
+def check_batch_size(value):
+    ivalue = int(value)
+    if ivalue <= 0:
+         raise argparse.ArgumentTypeError("%s is an invalid positive int value" % value)
+    return ivalue
+
+def validate_model_and_extract(s):
+    # Check for vit[*] format
+    vit_match = re.match(r'^(vit)\[(\d+)\]$', s)
+    if vit_match:
+        number = int(vit_match.group(2))
+        if number > 0 and number % 16 == 0:
+            return {'type': 'vit', 'value': number}
+        else:
+            raise ValueError(f"Invalid value for 'vit': {number}. It must be a positive integer divisible by 16.")
+
+    # Check for stream[m, n] format
+    stream_match = re.match(r'^stream\[(vit|cnn|resnet|unet)->(vit|cnn|resnet|unet), (\d+)\]$', s)
+    if stream_match:
+        top_m = stream_match.group(1)
+        bottom_m = stream_match.group(2)
+        n = int(stream_match.group(3))
+
+        if n <= 0:
+            raise ValueError(f"Invalid value for 'n': {n}. It must be a positive integer.")
+        
+        if (top_m == "vit" or bottom_m == "vit") and n % 16 != 0:
+            raise ValueError(f"Invalid combination: stream[{top_m}|{bottom_m}, {n}]. When 'm' is 'vit', 'n' must be divisible by 16.")
+        
+        return {'type': 'stream', 'top': top_m, 'bottom': bottom_m, 'value': n}
+
+    raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]")
 
 
-if __name__ == "__main__":
+def create_model(param, lr: float, epochs: int, load_path: str, device: str):
 
-    # get current split
+
+    if param['type'] == 'vit':
+        model = DinoFeatureClassifier()
+        if os.path.isfile(load_path):
+            Logger.log('Loading stored ViT')
+            checkpoint = torch.load(load_path)
+
+            model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model'].items()}
+
+            model.load_state_dict(model_state_dict)
+
+            optimizer = AdamW(model.parameters(), lr=lr)
+            optimizer.load_state_dict(checkpoint['optimizer'])
+
+            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
+            scheduler.load_state_dict(checkpoint['scheduler'])
+
+            return model, optimizer, scheduler, float(checkpoint['best_f1']), float(checkpoint['best_loss']), int(checkpoint['epoch']), True
+        else:
+            Logger.log('Creating New ViT')
+            optimizer = AdamW(model.parameters(), lr=lr)
+            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
+            return model, optimizer, scheduler, 0.0, float('inf'), 0, False
+    elif param['type'] == 'stream':
+
+        top_param = param['top']
+        bottom_param = param['bottom']
+
+        if top_param == 'cnn':
+            top_net = TopCNN()
+        else:
+            raise ValueError(f'No {top_param} top net available!!')
+
+        if bottom_param == 'cnn':
+            bottom_net = BottomCNN()
+        elif bottom_param == 'vit':
+            bottom_net = Vit(32)
+        elif bottom_param == 'resnet':
+            bottom_net = ResNet(32)
+        else:
+            raise ValueError(f'No {bottom_param} bottom net available!!')
+
+
+        if os.path.isfile(load_path):
+            Logger.log(f'Loading stored {param}')
+            checkpoint = torch.load(load_path)
+            model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model'].items()}
+
+            model = StreamingNet(top_net.to(device), bottom_net.to(device), param['value']) 
+            model.load_state_dict(model_state_dict)
+
+            optimizer = AdamW(model.parameters(), lr=lr)
+            optimizer.load_state_dict(checkpoint['optimizer'])
+
+            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
+            scheduler.load_state_dict(checkpoint['scheduler'])
+
+            return model, optimizer, scheduler, float(checkpoint['best_f1']), float(checkpoint['best_loss']), int(checkpoint['epoch']), True
+        else:
+            Logger.log(f'Creating New {param}')
+            model = StreamingNet(top_net.to(device), bottom_net.to(device), param['value'])
+            optimizer = AdamW(model.parameters(), lr=lr)
+            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
+            return model, optimizer, scheduler, 0.0, float('inf'), 0, False
+    else:
+        raise ValueError(f'{param} Not Implemented')
+
+
+def main():
+
     parser = argparse.ArgumentParser()
-    parser.add_argument('--shift', type=int, default=0, help='the shift to apply to the data splits')
-    parser.add_argument('--epochs', type=int, default=100, help='number of epoch')
-    parser.add_argument('--data', type=str, help="data directory")
-    parser.add_argument('--optimizer', type=int, default=0, help="optimizer for the mlp, 0 => SGD, 1 => RMSProp, 2 => Adam")
+    parser.add_argument("--shift", type=int, default=0, choices=[0, 1, 2, 3, 4])
+    parser.add_argument("--epochs", type=int, default=250)
+    parser.add_argument("--data_dir", type=str, required=True)
+    parser.add_argument("--models_dir", type=str, required=True)
+    parser.add_argument("--type", type=str, default="vit[2048]")
+    parser.add_argument("--device", type=str, default='cuda', choices=['cuda', 'cpu'])
+    parser.add_argument("--batch_size", type=check_batch_size, required=True)
+    parser.add_argument("--lr", type=float, required=True)
+    parser.add_argument("--oversample", type=float, default=0.5)
+    parser.add_argument("--test_only", type=int, default=0, choices=[0, 1])
 
     args = parser.parse_args()
 
-    # dunno if this check is needed
-    data_dir = args.data
-    if data_dir is None or len(data_dir) == 0:
-        raise ValueError("No data directory given!")
+    model_type = validate_model_and_extract(args.type)
+    test_only = args.test_only == 1
 
-    shift = args.shift
-    if shift is None:
-        raise ValueError("No shift given!")
+    dist.init_process_group(backend='nccl', init_method='env://')
 
-    num_epochs = args.epochs
-    if num_epochs is None:
-        raise ValueError("No epochs number given!")
+    rank = int(os.environ["LOCAL_RANK"])
 
+    device_count = torch.cuda.device_count()
+    device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
 
-    splits_dir = data_dir + '/splits.json' 
+    # Memory Load Management
+    local_gpu_memory = int(torch.cuda.get_device_properties(rank).total_memory / (1024 ** 2))
 
-    # Load the json file
-    with open(splits_dir, "r") as f:
-        data = json.load(f)
+    all_local_gpu_memories = torch.zeros(device_count, dtype=torch.int64, device=device) 
+    all_local_gpu_memories[rank] = torch.tensor(local_gpu_memory, dtype=torch.int64, device=device)
 
-    # Define the image transformations
+    dist.all_reduce(all_local_gpu_memories, op=dist.ReduceOp.SUM)
+    tot_gpu_memory = all_local_gpu_memories.sum().item()
 
-    image_dir = data_dir + '/hotspots-png'
+    local_batch_size = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
+ 
+    tot_batch_size = torch.tensor(local_batch_size, dtype=torch.int, device=device)
+    dist.all_reduce(tot_batch_size, op=dist.ReduceOp.SUM)
+    tot_batch_size = tot_batch_size.item()
 
-    print("loading images...")
+    # Select GPU with lowest load to aggregate results
+    local_mem_per_sample =  local_gpu_memory / local_batch_size
 
-    # Load all images into memory and apply transformations
-    all_images_paths = []
-    all_labels = []
-    for split in data.values():
-        for label, images in split.items():
-            for image_name in images:
-                image_path = os.path.join(image_dir, image_name + '.png')
-                if os.path.isfile(image_path):
-                    all_images_paths.append(image_path)
-                    all_labels.append(int(label))
-                else:
-                    print(f'{image_path} Not Found')
+    all_mems_per_sample = torch.zeros(device_count, dtype=torch.float32, device=device) 
+    all_mems_per_sample[rank] = torch.tensor(local_mem_per_sample, dtype=torch.float32, device=device)
 
-    transform = transforms.Compose([
-        transforms.Resize((3584, 3584)),  # vits16 requires multiples of 16 
-        transforms.ToTensor() 
-        ])
+    dist.all_reduce(all_mems_per_sample, op=dist.ReduceOp.SUM)
 
-    dataset = CustomImageDataset(all_images_paths, all_labels, transform=transform)
+    smallest_mem_per_sample_index =  int(all_mems_per_sample.argmin())
+    smallest_mem_per_sample = float(all_mems_per_sample[smallest_mem_per_sample_index].item())
 
-    # Set the indices for the train and validation sets
-    train_indices = [idx for idx in range(len(dataset)) if idx % 5 != shift]
-    validation_indices = [idx for idx in range(len(dataset)) if idx % 5 == shift]
+    free_memory_per_gpu = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
 
-    # Create the DataLoaders
-    train_loader = DataLoader(Subset(dataset, train_indices), batch_size=1, shuffle=False)
-    validation_loader = DataLoader(Subset(dataset, validation_indices), batch_size=1, shuffle=False)
+    for r, m in enumerate(free_memory_per_gpu):
+        if (smallest_mem_per_sample * (all_local_gpu_memories[r].item() / tot_gpu_memory) ) <= m:
+            free_memory_per_gpu[r] -= smallest_mem_per_sample
+            tot_batch_size += 1
+            if r == rank:
+                local_batch_size += 1
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-                                                                                                      
-    # Init Model
-    model = DinoFeatureClassifier().to(device)
-    # binary output true or false
-    criterion = nn.BCELoss()
-    #optimizer
-    optimizer = get_optimizer(model, args.optimizer)
+    # aggregating GPU always the one with the most space 
+    main_gpu = free_memory_per_gpu.index(max(free_memory_per_gpu))
 
-    print(f'Starting ... Optimizer: {args.optimizer}, Shift: {shift}, device: {device}')
+    run_name = f'{args.type}_shift_{args.shift}_batch_size_{tot_batch_size}_oversample_{args.oversample}'
+    checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
 
-    # Training and validation loop
-    for epoch in range(num_epochs):
+    torch.cuda.set_device(main_gpu)
 
-        # Train
-        model.train()  
-        for images, labels in train_loader:
-            images = images.to(device)
-            labels = labels.to(device).float().view(-1, 1)
-
-            optimizer.zero_grad() 
-            outputs = model(images) 
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-
-        # Validate
-        model.eval() 
-        validation_loss = 0
-        correct = 0
-        all_labels = []
-        all_predictions = []
-        with torch.no_grad():
-            for images, labels in validation_loader:
-                images = images.to(device)
-                labels = labels.to(device).float().view(-1, 1)
-
-                outputs = model(images)
-                loss = criterion(outputs, labels)
-                validation_loss += loss.item()
-                _, predicted = torch.max(outputs, 1)
-                correct += (predicted == labels).sum().item()
-
-                all_labels.extend(labels.tolist())
-                all_predictions.extend(predicted.tolist())
-
-        f1 = f1_score(all_labels, all_predictions)
-
-        tot_validation_loss = validation_loss / len(validation_loader)
-
-        if tot_validation_loss  < best_validation_loss:
-           best_validation_loss  = tot_validation_loss
-           torch.save(model.state_dict(), f"vit_opt_{args.optimizer}_shift_{args.shift}.pth")
+    Logger.init(run_name, main_gpu)
+    Logger.log(f'Tot Batch Size: {tot_batch_size}')
+    Logger.log(f'Aggregate Results at GPU: {main_gpu}')
+    Logger.log(f'Using device: {device} with batch size: {local_batch_size}', None)
 
 
-        print(f'Epoch {epoch + 1}, Train Loss: {loss.item()}, Validation Loss: {validation_loss / len(validation_loader)}, Validation Accuracy: {correct / len(validation_indices)}, Validation F1 Score: {f1}')
+    model, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath, device)
+
+    model = model.to(device)
+
+    if rank == main_gpu:
+        if not test_only:
+            wandb.init(
+                    project=f'pT1',
+                    group=f'{args.type}',
+                    name = f'cv{args.shift}',
+                    config= {
+                        "learning_rate": args.lr,
+                        "architecture": f'{args.type}',
+                        "dataset": "Tumor Budding Hotspots",
+                        },
+                    resume=is_resume
+                    )
+    assert model is not None
+
+    Logger.log(f'running distributed on {torch.cuda.device_count()} GPUs')
+
+    model = DistributedDataParallel(model, device_ids=[device], output_device=device)
+    model = SyncBatchNorm.convert_sync_batchnorm(model)
+
+    optimizer = AdamW(model.parameters(), lr=args.lr)
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) 
+
+    Logger.log("Loading Data ...")
+
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type)
+
+    weights = torch.from_numpy(class_weights).float().to(device)
+
+    Logger.log(f'Class weights {class_weights}')
+
+    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.2)
+
+    Logger.log("Start Training ...")
+
+    no_improvement = 0
+
+    flag_tensor = torch.zeros(1).to(device)
+
+    epochs = 0 if test_only else 10000 
+
+    while epoch < epochs:
+        model.train()
+        train_dataloader.sampler.set_epoch(epoch)
+        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
+        model.eval()
+        val_dataloader.sampler.set_epoch(epoch)
+        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
+        if rank == main_gpu:
+            wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
+            Logger.log(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}', None)
+
+            average_f1 = (val_f1[0] + val_f1[1]) / 2
+
+            if  best_loss > val_loss or average_f1 > best_f1: 
+
+                best_loss = val_loss if best_loss > val_loss else best_loss
+                best_f1 = average_f1 if average_f1 > best_f1 else best_f1
+
+                no_improvement = 0
+                model_path = f'{args.models_dir}/{run_name}.pth'
+                Logger.log(f'Saving model to {model_path}', None)
+                torch.save({
+                    'epoch': epoch,
+                    'model': model.state_dict(), 
+                    'optimizer': optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict(),
+                    'best_f1': best_f1,
+                    'best_loss': best_loss,
+                    },
+                    model_path 
+                    )
+                wandb.save(model_path)
+            else:
+                no_improvement += 1
+                if no_improvement >= 40:
+                    Logger.log("No Loss And F1 improvement for 40 Epoch, exiting training", None)
+                    flag_tensor += 1
+
+        dist.all_reduce(flag_tensor)
+
+        if flag_tensor == 1:
+            break;
+        epoch += 1
+
+    # test values
+    model = model.to(device)
+    model.eval() 
+    test_dataloader.sampler.set_epoch(epoch)
+    test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, args.t, average=None)
+    if rank == main_gpu:
+        wandb.finish()
+        Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
+
+
+if __name__ == "__main__":
+    main()
+
