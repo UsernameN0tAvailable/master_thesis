@@ -13,6 +13,8 @@ import random
 
 from torch.utils.data.distributed import DistributedSampler
 
+FULL_IMAGE_SIZE=3600
+
 class HotspotDataset(Dataset):
     def __init__(self, image_dir: str, splits: List[str], labels: List[int], transform):
         self.image_dir = image_dir
@@ -90,12 +92,12 @@ class PathsAndLabels():
     def __len__(self):
         return len(self.paths)
 
-    def get_dataset(self, batch_size: int, transform) -> DataLoader:
+    def get_dataset(self, batch_size: int, transform, pin_memory: bool) -> DataLoader:
         dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
         sampler = DistributedSampler(dataset, shuffle=True)
-        return DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=True)
+        return DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=pin_memory)
 
-def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type):
+def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type, is_pre_training: bool, pin_memory: bool):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
 
@@ -121,13 +123,28 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
 
     weights = train_data.get_weights()
 
-    crop_size = int(model_type["value"]) if model_type["type"] == 'vit' else 3600 
+    val_input_img_size = int(model_type["value"]) if model_type["type"] == "vit" else FULL_IMAGE_SIZE
+
+    train_input_img_size = val_input_img_size
+    crop_val_fn = transforms.CenterCrop(val_input_img_size) 
+    train_batch_size = batch_size
+    val_batch_size = batch_size 
+
+    if model_type["type"] != "vit" and is_pre_training:
+        train_input_img_size = int(model_type["value"])
+        train_input_img_size = train_input_img_size * 2 
+        train_batch_size = int(((FULL_IMAGE_SIZE ** 2) / (train_input_img_size ** 2)) * batch_size)
+
+    crop_train_fn = transforms.RandomCrop(train_input_img_size) 
+
+    Logger.log(f'Train Sampler:\nBatch Size: {train_batch_size}, Image Size: {train_input_img_size}\nVal Sampler:\nBatch Size: {batch_size}, Image Size {val_input_img_size}', None)
+    
 
     return [
             train_data.get_dataset(
-                batch_size,
+                train_batch_size,
                 transforms.Compose([
-                    transforms.RandomCrop(crop_size) if model_type['type'] == 'vit' else transforms.CenterCrop(crop_size),
+                    crop_train_fn,
                     Random90Rotation(), 
                     transforms.RandomHorizontalFlip(), 
                     transforms.RandomVerticalFlip(), 
@@ -136,22 +153,27 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
                     transforms.GaussianBlur(5, sigma=(0.1, 2.0)), 
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ]
-                )
+                ),
+                pin_memory
                 ), 
                 validation_data.get_dataset(
-                    batch_size,
+                    val_batch_size,
                     transforms.Compose([
-                    transforms.CenterCrop(crop_size),
+                    crop_val_fn,
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-                    ])),
+                    ]),
+                    pin_memory
+                    ),
                 test_data.get_dataset(
-                    batch_size,
+                    val_batch_size,
                     transforms.Compose([
-                    transforms.CenterCrop(crop_size),
+                    crop_val_fn,
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-                    ])),
+                    ]),
+                    pin_memory
+                    ),
                 weights
                 ]
 
@@ -179,5 +201,11 @@ class Logger():
 
     @staticmethod
     def log(val: str, rank: Optional[int] = -1):
-        if rank is None or (rank == -1 and int(os.environ["LOCAL_RANK"]) == Logger.logging_rank) or int(os.environ["LOCAL_RANK"]) == rank:
+
+        local_rank = int(os.environ["LOCAL_RANK"])
+
+        if rank is None:
+            val = f'Device: {local_rank}: {val}'
+
+        if rank is None or (rank == -1 and local_rank == Logger.logging_rank) or local_rank == rank:
             logging.info(val)

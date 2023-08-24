@@ -178,6 +178,7 @@ def create_model(param, lr: float, epochs: int, load_path: str, device: str):
 def main():
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--project", type=str, required=True)
     parser.add_argument("--shift", type=int, default=0, choices=[0, 1, 2, 3, 4])
     parser.add_argument("--epochs", type=int, default=250)
     parser.add_argument("--data_dir", type=str, required=True)
@@ -187,12 +188,16 @@ def main():
     parser.add_argument("--batch_size", type=check_batch_size, required=True)
     parser.add_argument("--lr", type=float, required=True)
     parser.add_argument("--oversample", type=float, default=0.5)
-    parser.add_argument("--test_only", type=int, default=0, choices=[0, 1])
+    parser.add_argument("-t", action="store_true", default=False, help="Test only run")
+    parser.add_argument("-i", action="store_true", default=False, help="Train with smaller images")
+    parser.add_argument("-p", action="store_true", default=False, help="Pin Memory for more efficient memory management")
 
     args = parser.parse_args()
 
+    if args.t and args.i:
+        raise ValueError("Cannot use reduced image size for testing!!")
+
     model_type = validate_model_and_extract(args.type)
-    test_only = args.test_only == 1
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
@@ -239,7 +244,7 @@ def main():
     # aggregating GPU always the one with the most space 
     main_gpu = free_memory_per_gpu.index(max(free_memory_per_gpu))
 
-    run_name = f'{args.type}_shift_{args.shift}_batch_size_{tot_batch_size}_oversample_{args.oversample}'
+    run_name = f'{args.type}_shift_{args.shift}_oversample_{args.oversample}'
     checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
 
     torch.cuda.set_device(main_gpu)
@@ -247,7 +252,7 @@ def main():
     Logger.init(run_name, main_gpu)
     Logger.log(f'Tot Batch Size: {tot_batch_size}')
     Logger.log(f'Aggregate Results at GPU: {main_gpu}')
-    Logger.log(f'Using device: {device} with batch size: {local_batch_size}', None)
+    Logger.log(f'Local Batch Size: {local_batch_size}', None)
 
 
     model, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath, device)
@@ -256,10 +261,10 @@ def main():
     model = model.to(device)
 
     if rank == main_gpu:
-        if not test_only:
+        if not args.t:
             wandb.init(
                     id=run_name,
-                    project=f'pT1',
+                    project=args.project,
                     group=f'{args.type}',
                     name = f'cv{args.shift}',
                     config= {
@@ -281,25 +286,30 @@ def main():
 
     Logger.log("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type, args.i, args.p)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
-    Logger.log(f'Class weights {class_weights}')
+    if not args.t:
+        Logger.log(f'Class weights {class_weights}')
 
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.2)
 
-    Logger.log("Start Training ...")
+    if args.t:
+        Logger.log("Start Test ...")
+    elif args.i:
+        Logger.log("Start Training with smaller images ...")
+    else:
+        Logger.log("Fine Tuning for whole resolution")
 
     no_improvement = 0
 
     flag_tensor = torch.zeros(1).to(device)
 
-    epochs = 0 if test_only else 10000 
 
     best_model_dict = None
 
-    while epoch < epochs:
+    while True and not args.t:
         model.train()
         train_dataloader.sampler.set_epoch(epoch)
         train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
@@ -308,7 +318,7 @@ def main():
         val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
         if rank == main_gpu:
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
-            Logger.log(f'Epoch: {epoch + 1}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}', None)
+            Logger.log(f'Epoch: {epoch}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
 
             average_f1 = (val_f1[0] + val_f1[1]) / 2
 
@@ -345,13 +355,14 @@ def main():
         epoch += 1
 
     # test values
-    model = model.to(device)
-    model.eval() 
-    test_dataloader.sampler.set_epoch(epoch)
-    test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, average=None)
-    if rank == main_gpu:
-        wandb.finish()
-        Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
+    if args.t or not args.i:
+        model = model.to(device)
+        model.eval() 
+        test_dataloader.sampler.set_epoch(epoch)
+        test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, average=None)
+        if rank == main_gpu:
+            wandb.finish()
+            Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
 
 
 if __name__ == "__main__":
