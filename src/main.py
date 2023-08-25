@@ -322,7 +322,7 @@ def main():
 
             average_f1 = (val_f1[0] + val_f1[1]) / 2
 
-            if best_model_dict is None or best_loss > val_loss or average_f1 > best_f1: 
+            if best_model_dict is None or (best_loss >= val_loss and average_f1 >= best_f1) or (average_f1 >= best_f1 and val_loss >= best_loss): 
 
                 best_loss = val_loss if best_loss > val_loss else best_loss
                 best_f1 = average_f1 if average_f1 > best_f1 else best_f1
