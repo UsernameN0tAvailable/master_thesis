@@ -134,6 +134,8 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
         train_input_img_size = int(model_type["value"])
         train_input_img_size = train_input_img_size * 2 
         train_batch_size = int(((FULL_IMAGE_SIZE ** 2) / (train_input_img_size ** 2)) * batch_size)
+        crop_val_fn = transforms.RandomCrop(train_input_img_size)
+        val_batch_size = train_batch_size
 
     crop_train_fn = transforms.RandomCrop(train_input_img_size) 
 

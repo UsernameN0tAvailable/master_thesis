@@ -331,7 +331,7 @@ def main():
                 no_improvement = 0
             else:
                 no_improvement += 1
-                if no_improvement >= 40:
+                if no_improvement >= 80:
                     Logger.log("No Loss And F1 improvement for 40 Epoch, exiting training", None)
                     flag_tensor += 1
 
