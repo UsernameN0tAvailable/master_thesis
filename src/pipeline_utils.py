@@ -13,7 +13,7 @@ import random
 
 from torch.utils.data.distributed import DistributedSampler
 
-FULL_IMAGE_SIZE=3600
+FULL_IMAGE_SIZE=3504
 
 class HotspotDataset(Dataset):
     def __init__(self, image_dir: str, splits: List[str], labels: List[int], transform):
