@@ -119,7 +119,7 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
         else: 
             test_data.push(split)
 
-    Logger.log(f'Loaders: Train: {len(train_data)}, Val: {len(validation_data)}, Test: {len(test_data)}')
+    Logger.log(f'\nLoaders:\nTrain: {len(train_data)}\nVal: {len(validation_data)}, Test: {len(test_data)}')
 
     weights = train_data.get_weights()
 
@@ -130,7 +130,7 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
     train_batch_size = batch_size
     val_batch_size = batch_size 
 
-    if model_type["type"] != "vit" and is_pre_training:
+    if is_pre_training:
         train_input_img_size = int(model_type["value"])
         train_input_img_size = train_input_img_size * 2 
         train_batch_size = int(((FULL_IMAGE_SIZE ** 2) / (train_input_img_size ** 2)) * batch_size)
