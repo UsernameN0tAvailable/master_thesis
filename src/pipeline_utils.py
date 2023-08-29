@@ -136,10 +136,11 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
         train_batch_size = int(((FULL_IMAGE_SIZE ** 2) / (train_input_img_size ** 2)) * batch_size)
         crop_val_fn = transforms.RandomCrop(train_input_img_size)
         val_batch_size = train_batch_size
+        val_input_img_size = train_batch_size
 
     crop_train_fn = transforms.RandomCrop(train_input_img_size) 
 
-    Logger.log(f'Train Sampler:\nBatch Size: {train_batch_size}, Image Size: {train_input_img_size}\nVal Sampler:\nBatch Size: {batch_size}, Image Size {val_input_img_size}', None)
+    Logger.log(f'Train Sampler:\nBatch Size: {train_batch_size}, Image Size: {train_input_img_size}\nVal Sampler:\nBatch Size: {val_batch_size}, Image Size {val_input_img_size}', None)
     
 
     return [
