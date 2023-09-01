@@ -10,6 +10,8 @@ from models.streaming.top import TopCNN
 from models.streaming.bottom import BottomCNN, Vit, ResNet
 from models.streaming.scnn import StreamingNet
 
+import ssl
+
 import re
 
 # distribute
@@ -19,6 +21,9 @@ import wandb
 from pipeline_utils import get_dataloaders, Logger
 
 from torch.nn import SyncBatchNorm
+
+# pytorch bug
+ssl._create_default_https_context = ssl._create_unverified_context
 
 
 def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average="weighted"):
