@@ -1,6 +1,6 @@
 import os
 import argparse
-from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import precision_recall_fscore_support, f1_score
 import torch
 from torch import Value, nn
 from torch.optim import AdamW
@@ -10,8 +10,8 @@ from models.streaming.top import TopCNN
 from models.streaming.bottom import BottomCNN, Vit, ResNet
 from models.streaming.scnn import StreamingNet
 
+import math
 import ssl
-
 import re
 
 # distribute
@@ -66,9 +66,10 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
         gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
         precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=average, zero_division=0.0)
-        return epoch_loss, precision, recall, f1
+        avg_f1 = f1_score(gathered_trues, gathered_preds, average="weighted", zero_division=0.0)
+        return epoch_loss, precision, recall, f1, avg_f1
 
-    return None, None, None, None
+    return None, None, None, None, None
 
 
 # validation
@@ -249,7 +250,7 @@ def main():
     # aggregating GPU always the one with the most space 
     main_gpu = free_memory_per_gpu.index(max(free_memory_per_gpu))
 
-    run_name = f'{args.type}_shift_{args.shift}_oversample_{args.oversample}'
+    run_name = f'{args.type}_cv_{args.shift}_oversample_{args.oversample}'
     checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
 
     torch.cuda.set_device(main_gpu)
@@ -271,7 +272,7 @@ def main():
                     id=run_name,
                     project=args.project,
                     group=f'{args.type}',
-                    name = f'cv{args.shift}',
+                    name = f'{args.shift}',
                     config= {
                         "learning_rate": args.lr,
                         "architecture": f'{args.type}',
@@ -317,15 +318,18 @@ def main():
     while True and not args.t:
         model.train()
         train_dataloader.sampler.set_epoch(epoch)
-        train_loss, train_precision, train_recall, train_f1 = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
+        train_loss, train_precision, train_recall, train_f1, _ = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
         model.eval()
         val_dataloader.sampler.set_epoch(epoch)
-        val_loss, val_precision, val_recall, val_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
+        val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
+
         if rank == main_gpu:
+
+            if val_loss is None or math.isnan(val_loss):
+                val_loss = 1.0
+
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             Logger.log(f'Epoch: {epoch}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
-
-            average_f1 = (val_f1[0] + val_f1[1]) / 2
 
             if best_model_dict is None or best_loss > val_loss or average_f1 > best_f1: 
 
@@ -364,7 +368,7 @@ def main():
         model = model.to(device)
         model.eval() 
         test_dataloader.sampler.set_epoch(epoch)
-        test_loss, test_precision, test_recall, test_f1 = step(model, None, None, criterion, test_dataloader, device, rank, device_count, average=None)
+        test_loss, test_precision, test_recall, test_f1, _ = step(model, None, None, criterion, test_dataloader, device, rank, device_count, average=None)
         if rank == main_gpu:
             wandb.finish()
             Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
