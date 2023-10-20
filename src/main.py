@@ -1,5 +1,6 @@
 import os
 import argparse
+from typing import Optional
 from sklearn.metrics import precision_recall_fscore_support, f1_score
 import torch
 from torch import Value, nn
@@ -9,6 +10,8 @@ from models.dino import DinoFeatureClassifier
 from models.streaming.top import TopCNN
 from models.streaming.bottom import BottomCNN, Vit, ResNet
 from models.streaming.scnn import StreamingNet
+import csv
+import numpy as np
 
 import math
 import ssl
@@ -19,7 +22,6 @@ from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
 import wandb
 from pipeline_utils import get_dataloaders, Logger
-
 from torch.nn import SyncBatchNorm
 
 # pytorch bug
@@ -180,6 +182,26 @@ def create_model(param, lr: float, epochs: int, load_path: str, device: str):
     else:
         raise ValueError(f'{param} Not Implemented')
 
+def load_clinical_data(path: str):
+
+    out = {}
+
+    with open(path, mode='r') as file:
+        reader = csv.reader(file)
+
+        next(reader)
+
+        for row in reader:
+            [name, arg0, arg1, arg2, arg3] = row
+            out[name.replace(".", "dot")] = np.array([
+                float(1.0 if arg0 == "Yes" else 0.0),
+                float(arg1),
+                float(arg2),
+                float(arg3)
+                ])
+
+    return out
+
 
 def main():
 
@@ -197,8 +219,16 @@ def main():
     parser.add_argument("-t", action="store_true", default=False, help="Test only run")
     parser.add_argument("-i", action="store_true", default=False, help="Train with smaller images")
     parser.add_argument("-p", action="store_true", default=False, help="Pin Memory for more efficient memory management")
+    parser.add_argument("--clinical_data", type=str, default=None, help="Additional clinical data file path for the classification net")
 
     args = parser.parse_args()
+
+    clinical_data: Optional[str] = None;
+
+    if args.clinical_data:
+        clinical_data = load_clinical_data(args.clinical_data)
+
+    print(clinical_data)
 
     if args.t and args.i:
         raise ValueError("Cannot use reduced image size for testing!!")
