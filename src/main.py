@@ -116,7 +116,6 @@ def create_model(param, lr: float, epochs: int, load_path: str, device: str, has
         if os.path.isfile(load_path):
             Logger.log('Loading stored ViT')
             checkpoint = torch.load(load_path)
-
             model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model'].items()}
 
             model.load_state_dict(model_state_dict)

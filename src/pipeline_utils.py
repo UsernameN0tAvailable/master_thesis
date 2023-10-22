@@ -52,7 +52,16 @@ class HotspotDataset(Dataset):
         label = self.labels[idx]
         image = Image.open(img_path)
         image = self.transform(image)
-        return image, label
+
+        clinical_data = None
+
+        if self.clinical_data is not None:
+            if img_name in self.clinical_data:
+                clinical_data = self.clinical_data[img_name]
+            else:
+                clinical_data = np.zeros(4)
+
+        return image, label, clinical_data
 
 class PathsAndLabels():
     def __init__(self, data_dir: str):
