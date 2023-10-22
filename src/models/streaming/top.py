@@ -29,7 +29,6 @@ class TopCNN(torch.nn.Module):
     def forward(self, x: Tensor, clinical_data: Tensor):
         x: Tensor = self.layers(x)
         x: Tensor = x.view(x.shape[0], -1)
-        print(x.dtype, clinical_data.dtype)
         x = torch.cat((x, clinical_data), dim=1)
         x = self.classifier(x)
         return x

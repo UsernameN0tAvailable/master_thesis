@@ -7,11 +7,11 @@ import re
 import logging
 from pipeline_utils import Optimizer
 
-def make_nonlinear_clusterer(in_channels: int, out_channels: int, bias: Optional[bool] = False):
+def make_nonlinear_clusterer(in_channels: int, out_channels: int):
     return torch.nn.Sequential(
-        torch.nn.Conv2d(in_channels, in_channels, (1, 1)),
+        torch.nn.Linear(in_channels, in_channels),
         torch.nn.ReLU(),
-        torch.nn.Conv2d(in_channels, out_channels, (1, 1), bias=bias)
+        torch.nn.Linear(in_channels, out_channels)
     )
 
 def make_linear_clusterer(in_channels: int, out_channels: int, bias: Optional[bool] = False):
@@ -98,6 +98,8 @@ class DinoFeatureClassifier(DinoFeature):
 
         tot_in_channels =  self.n_feats + 4 if clinical_data else self.n_feats
 
+        print("tot channels: ", tot_in_channels)
+
         self.cluster = make_nonlinear_clusterer(
             in_channels=tot_in_channels,
             out_channels=self.n_cls
@@ -110,14 +112,13 @@ class DinoFeatureClassifier(DinoFeature):
         z: Tensor = z.unsqueeze(-1).unsqueeze(-1)
 
         # Use either cls token or avg of tokens
-        y_pixel: Tensor = self.dropout(z)
+        y_pixel: Tensor = self.dropout(z).squeeze(2).squeeze(2)
 
         # insert additional clinical data before classifier
-        y_pixel = torch.cat((y_pixel, clinical_data), dim=0)
-        
+        y_pixel = torch.cat((y_pixel, clinical_data), dim=1)  
         y_pixel = self.cluster(y_pixel)
 
-        return y_pixel.squeeze(2).squeeze(2)
+        return y_pixel
 
     def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor):
         output = self.forward(images, 1, clinical_data=clinical_data)
