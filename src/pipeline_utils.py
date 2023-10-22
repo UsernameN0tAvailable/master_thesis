@@ -56,7 +56,9 @@ class HotspotDataset(Dataset):
         clinical_data = None
 
         if self.clinical_data is not None:
+            print("fount")
             if img_name in self.clinical_data:
+                print(f'found {img_name} in self.clinical_data')
                 clinical_data = self.clinical_data[img_name]
             else:
                 clinical_data = np.zeros(4)
