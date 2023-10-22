@@ -1,6 +1,6 @@
 import os
 import argparse
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 from sklearn.metrics import precision_recall_fscore_support, f1_score
 import torch
 from torch import nn, Tensor
@@ -21,23 +21,23 @@ import re
 from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
 import wandb
-from pipeline_utils import get_dataloaders, Logger
+from pipeline_utils import get_dataloaders, Logger, Optimizer
 from torch.nn import SyncBatchNorm
 
 # fix ssl pytorch bug
 ssl._create_default_https_context = ssl._create_unverified_context
 
-def step(model, optimizer: Optional[AdamW], scheduler: Optional[CosineAnnealingLR], criterion, dataloader, device: str, rank: int, device_count: int, average: Optional[str] ="weighted"):
+def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: str, rank: int, device_count: int, average: Optional[str] ="weighted"):
 
     running_loss: Tensor = torch.tensor(0.0, device=device)
     true: List[np.ndarray] = []
     preds: List[np.ndarray] = []
 
-    for images, labels in dataloader:
+    for images, labels, clinical_data in dataloader:
         labels: Tensor = labels.to(device)
         images: Tensor = images.to(device)
 
-        if optimizer is not None: optimizer.zero_grad()
+        if optimizer is not None: optimizer.optimizer.zero_grad()
 
         output, loss = model.module.step(images, labels, criterion, optimizer is not None)
         running_loss += loss.item() * images.size(0)
@@ -47,10 +47,9 @@ def step(model, optimizer: Optional[AdamW], scheduler: Optional[CosineAnnealingL
         preds.extend(predicted.cpu().numpy())
 
         if optimizer is not None:
-            optimizer.step()
-            if scheduler is not None: scheduler.step()
-
-            optimizer.zero_grad() 
+            optimizer.optimizer.step()
+            optimizer.scheduler.step()
+            optimizer.optimizer.zero_grad() 
 
     dist.all_reduce(running_loss, op=dist.ReduceOp.AVG)
     epoch_loss: float = running_loss.item() / len(dataloader.dataset)
@@ -109,29 +108,13 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]")
 
 
-def create_model(param, lr: float, epochs: int, load_path: str, device: str, has_clinical_data: bool = False):
+def create_model(model_param: Dict[str, Any], lr: float, epochs: int, device: str, has_clinical_data: bool = False): -> Tuple[DinoFeatureClassifier | StreamingNet]
+
+    model: Optional[DinoFeatureClassifier | StreamingNet] = None
+    Logger.log("Model: {model_param}")
 
     if param['type'] == 'vit':
-        model = DinoFeatureClassifier()
-        if os.path.isfile(load_path):
-            Logger.log('Loading stored ViT')
-            checkpoint = torch.load(load_path)
-            model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model'].items()}
-
-            model.load_state_dict(model_state_dict)
-
-            optimizer = AdamW(model.parameters(), lr=lr)
-            optimizer.load_state_dict(checkpoint['optimizer'])
-
-            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
-            scheduler.load_state_dict(checkpoint['scheduler'])
-
-            return model, optimizer, scheduler, float(checkpoint['best_f1']), float(checkpoint['best_loss']), int(checkpoint['epoch']), True
-        else:
-            Logger.log('Creating New ViT')
-            optimizer = AdamW(model.parameters(), lr=lr)
-            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
-            return model, optimizer, scheduler, 0.0, float('inf'), 0, False
+        return DinoFeatureClassifier(clinical_data=has_clinical_data)
     elif param['type'] == 'stream':
 
         top_param = param['top']
@@ -155,30 +138,12 @@ def create_model(param, lr: float, epochs: int, load_path: str, device: str, has
         else:
             raise ValueError(f'No {bottom_param} bottom net available!!')
 
-
-        if os.path.isfile(load_path):
-            Logger.log(f'Loading stored {param}')
-            checkpoint = torch.load(load_path)
-            model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model'].items()}
-
-            model = StreamingNet(top_net.to(device), bottom_net.to(device), param['value']) 
-            model.load_state_dict(model_state_dict)
-
-            optimizer = AdamW(model.parameters(), lr=lr)
-            optimizer.load_state_dict(checkpoint['optimizer'])
-
-            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
-            scheduler.load_state_dict(checkpoint['scheduler'])
-
-            return model, optimizer, scheduler, float(checkpoint['best_f1']), float(checkpoint['best_loss']), int(checkpoint['epoch']), True
-        else:
-            Logger.log(f'Creating New {param}')
-            model = StreamingNet(top_net.to(device), bottom_net.to(device), param['value'])
-            optimizer = AdamW(model.parameters(), lr=lr)
-            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
-            return model, optimizer, scheduler, 0.0, float('inf'), 0, False
+        return StreamingNet(top_net.to(device), bottom_net.to(device), param['value']) 
     else:
         raise ValueError(f'{param} Not Implemented')
+
+    return model
+
 
 def load_clinical_data(path: str) -> Dict[str, np.ndarray]:
 
@@ -191,12 +156,11 @@ def load_clinical_data(path: str) -> Dict[str, np.ndarray]:
         for row in reader:
             [name, arg0, arg1, arg2, arg3] = row
             out[name.replace(".", "dot")] = np.array([
-                float(1.0 if arg0 == "Yes" else 0.0),
+                float(1.0 if arg0 == "Yes" or arg0 == "yes" else 0.0),
                 float(arg1),
                 float(arg2),
                 float(arg3)
                 ])
-
     return out
 
 
@@ -285,10 +249,11 @@ def main():
     Logger.log(f'Local Batch Size: {local_batch_size}', None)
 
 
-    model_o, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath, device, clinical_data is not None)
+    model_obj: DinoFeatureClassifier | StreamingNet = create_model(model_type, float(args.lr), int(args.epochs), device, clinical_data is not None)
 
+    is_resume = os.path.isfile(checkpoint_filepath)
 
-    model_o = model_o.to(device)
+    model_obj = model_obj.to(device)
 
     if rank == main_gpu:
         if not args.t:
@@ -304,15 +269,28 @@ def main():
                         },
                     resume=is_resume
                     )
-    assert model_o is not None
+    assert model_obj is not None
 
     Logger.log(f'running distributed on {torch.cuda.device_count()} GPUs')
 
-    model_dist: DistributedDataParallel = DistributedDataParallel(model_o, device_ids=[device], output_device=device)
+    model_dist: DistributedDataParallel = DistributedDataParallel(model_obj, device_ids=[device], output_device=device)
     model: SyncBatchNorm = SyncBatchNorm.convert_sync_batchnorm(model_dist)
 
-    optimizer: AdamW = AdamW(model.parameters(), lr=args.lr)
-    scheduler: CosineAnnealingLR = CosineAnnealingLR(optimizer, T_max=args.epochs) 
+    best_f1: float = float(0.0)
+    best_loss: float = float(1.0)
+    epoch: int = int(0)
+
+    if is_resume:
+        Logger.log('Loading Stored')
+        checkpoint_dict = torch.load(load_path)
+        model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint_dict['model'].items()}
+        model.load_state_dict(model_state_dict)
+
+        best_f1 = float(checkpoint_dict["best_f1"])
+        best_loss = float(checkpoint_dict["best_loss"])
+        epoch = int(checkpoint_dict["epoch"])
+
+    optimizer: Optimizer = Optimizer.new(model.parameters(), lr, epochs, checkpoint_dict)
 
     Logger.log("Loading Data ...")
 
@@ -336,16 +314,15 @@ def main():
 
     flag_tensor = torch.zeros(1).to(device)
 
-
     best_model_dict = None
 
     while True and not args.t:
         model.train()
         train_dataloader.sampler.set_epoch(epoch)
-        train_loss, train_precision, train_recall, train_f1, _ = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
+        train_loss, train_precision, train_recall, train_f1, _ = step(model, optimizer, criterion, train_dataloader, device, rank, device_count)
         model.eval()
         val_dataloader.sampler.set_epoch(epoch)
-        val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
+        val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, criterion, val_dataloader, device, rank, device_count, average=None)
 
         if rank == main_gpu:
 
@@ -374,8 +351,8 @@ def main():
             torch.save({
                 'epoch': epoch,
                 'model': best_model_dict, 
-                'optimizer': optimizer.state_dict(),
-                'scheduler': scheduler.state_dict(),
+                'optimizer': optimizer.optimizer.state_dict(),
+                'scheduler': optimizer.scheduler.state_dict(),
                 'best_f1': best_f1,
                 'best_loss': best_loss,
                 },

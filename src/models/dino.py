@@ -102,14 +102,20 @@ class DinoFeatureClassifier(DinoFeature):
             out_channels=self.n_cls
             )
 
-    def forward(self, img, n: Optional[int] = 1, clinical_data = None):
+    def forward(self, img, n: Optional[int] = 1, clinical_data: Optional[np.ndarray] = None):
 
         # Compute embedding
         z, _ = super(DinoFeatureClassifier, self).forward(img, n=n)
-        z = z.unsqueeze(-1).unsqueeze(-1)
+        z: Tensor = z.unsqueeze(-1).unsqueeze(-1)
 
         # Use either cls token or avg of tokens
-        y_pixel = self.dropout(z)
+        y_pixel: Tensor = self.dropout(z)
+
+        # insert additional clinical data before classifier
+        if clinical_data is not None:
+            add_tensor = torch.from_numpy(clinical_data)
+            y_pixel = torch.cat((y_pixel, add_tensor), dim=0)
+        
         y_pixel = self.cluster(y_pixel)
 
         return y_pixel.squeeze(2).squeeze(2)
