@@ -18,26 +18,22 @@ from torch.utils.data.distributed import DistributedSampler
 
 FULL_IMAGE_SIZE=3504
 
-class OptimizerAndScheduler(): 
+class Optimizer(): 
 
     def __init__(self, optimizer: AdamW, scheduler: CosineAnnealingLR): 
         self.optimizer = optimizer
         self.scheduler = scheduler
 
     @classmethod
-    def new(cls, model_paramters: Iterator[Parameter], lr: float, epochs: int) -> 'OptimizerAndScheduler':
+    def new(cls, model_paramters: Iterator[Parameter], lr: float, epochs: int, state_dict: Optional[Dict[str, Any]]) -> 'Optimizer':
         optimizer: AdamW = AdamW(model_paramters, lr=lr)
-        scheduler: CosineAnnealingLR = CosineAnnealingLR(optimizer, T_max=epochs)
-        return OptimizerAndScheduler(optimizer, scheduler)
+        if state_dict is not None and 'optimizer' in state_dict:
+            optimizer.load_state_dict(state_dict['optimizer'])
 
-    @classmethod
-    def load(cls, model_paramters: Iterator[Parameter], lr: float, epochs: int, state_dict: Dict[str, Any]) -> 'OptimizerAndScheduler':
-        optimizer: AdamW = AdamW(model_paramters, lr=lr)
-        optimizer.load_state_dict(state_dict['optimizer'])
         scheduler: CosineAnnealingLR = CosineAnnealingLR(optimizer, T_max=epochs)
-        scheduler.load_state_dict(state_dict['scheduler'])
-        return OptimizerAndScheduler(optimizer, scheduler)
-
+        if state_dict is not None and 'scheduler' in state_dict:
+            scheduler.load_state_dict(state_dict['scheduler'])
+        return Optimizer(optimizer, scheduler)
 
 class HotspotDataset(Dataset):
     def __init__(self, image_dir: str, splits: List[str], labels: List[int], transform, clinical_data):
