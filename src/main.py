@@ -290,7 +290,7 @@ def main():
         best_loss = float(checkpoint_dict["best_loss"])
         epoch = int(checkpoint_dict["epoch"])
 
-    optimizer: Optimizer = Optimizer.new(model.parameters(), lr, epochs, checkpoint_dict)
+    optimizer: Optimizer = Optimizer.new(model.parameters(), float(args.lr), int(args.epochs), checkpoint_dict)
 
     Logger.log("Loading Data ...")
 
