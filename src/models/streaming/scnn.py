@@ -7,7 +7,7 @@ import math
 import os
 from dataclasses import dataclass
 from itertools import repeat
-from typing import NamedTuple, Union, List
+from typing import NamedTuple, Union, List, Optional
 
 import numpy as np
 import torch
