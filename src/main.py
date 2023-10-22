@@ -39,7 +39,7 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
 
         if optimizer is not None: optimizer.optimizer.zero_grad()
 
-        output, loss = model.module.step(images, labels, criterion, optimizer is not None)
+        output, loss = model.module.step(images, labels, criterion, optimizer)
         running_loss += loss.item() * images.size(0)
         predicted = torch.max(output.data, 1)[1]
         

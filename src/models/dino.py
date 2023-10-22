@@ -5,6 +5,7 @@ from torch.nn.functional import normalize
 from typing import Optional
 import re
 import logging
+from pipeline_utils import Optimizer
 
 def make_nonlinear_clusterer(in_channels: int, out_channels: int, bias: Optional[bool] = False):
     return torch.nn.Sequential(
@@ -120,8 +121,8 @@ class DinoFeatureClassifier(DinoFeature):
 
         return y_pixel.squeeze(2).squeeze(2)
 
-    def step(self, images, labels, criterion, optimizer):
-        output = self.forward(images)
+    def step(self, images, labels, criterion, optimizer: Optional[Optimizer]):
+        output = self.forward(images, 1, )
         loss = criterion(output, labels.view(-1))
 
         if optimizer is not None:

@@ -20,6 +20,8 @@ import collections.abc as container_abcs
 from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.utils import _pair
 
+from pipeline_utils import Optimizer
+
 class StreamingNet(torch.nn.Module):
 
     def to(self, device):
@@ -40,7 +42,7 @@ class StreamingNet(torch.nn.Module):
         self.scnn.enable() # enable streaming
 
 
-    def step(self, images, labels, criterion, is_train: bool):
+    def step(self, images, labels, criterion, optimizer: Optional[Optimizer]):
         with torch.no_grad():
             bottom_output = self.scnn.forward(images, result_on_cpu=False)
         torch.cuda.empty_cache()
@@ -49,7 +51,7 @@ class StreamingNet(torch.nn.Module):
 
         loss = criterion(top_output, labels.view(-1))
 
-        if is_train:
+        if optimizer is not None:
             loss.backward()
             self.scnn.backward(images, bottom_output.grad)
 
