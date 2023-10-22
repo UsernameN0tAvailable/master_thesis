@@ -36,10 +36,11 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
     for images, labels, clinical_data in dataloader:
         labels: Tensor = labels.to(device)
         images: Tensor = images.to(device)
+        clinical_data: Tensor = clinical_data.to(device)
 
         if optimizer is not None: optimizer.optimizer.zero_grad()
 
-        output, loss = model.module.step(images, labels, criterion, optimizer)
+        output, loss = model.module.step(images, labels, criterion, optimizer, clinical_data)
         running_loss += loss.item() * images.size(0)
         predicted = torch.max(output.data, 1)[1]
         
@@ -160,7 +161,7 @@ def load_clinical_data(path: str) -> Dict[str, np.ndarray]:
                 float(arg1),
                 float(arg2),
                 float(arg3)
-                ])
+                ], dtype=np.float32)
     return out
 
 

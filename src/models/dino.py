@@ -1,5 +1,5 @@
 import torch
-from torch import nn
+from torch import nn, Tensor
 import numpy as np
 from torch.nn.functional import normalize
 from typing import Optional
@@ -103,7 +103,7 @@ class DinoFeatureClassifier(DinoFeature):
             out_channels=self.n_cls
             )
 
-    def forward(self, img, n: Optional[int] = 1, clinical_data: Optional[np.ndarray] = None):
+    def forward(self, img, n: Optional[int], clinical_data: Tensor):
 
         # Compute embedding
         z, _ = super(DinoFeatureClassifier, self).forward(img, n=n)
@@ -113,15 +113,13 @@ class DinoFeatureClassifier(DinoFeature):
         y_pixel: Tensor = self.dropout(z)
 
         # insert additional clinical data before classifier
-        if clinical_data is not None:
-            add_tensor = torch.from_numpy(clinical_data)
-            y_pixel = torch.cat((y_pixel, add_tensor), dim=0)
+        y_pixel = torch.cat((y_pixel, clinical_data), dim=0)
         
         y_pixel = self.cluster(y_pixel)
 
         return y_pixel.squeeze(2).squeeze(2)
 
-    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Optional[np.ndarray] = None):
+    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor):
         output = self.forward(images, 1, clinical_data=clinical_data)
         loss = criterion(output, labels.view(-1))
 
