@@ -108,10 +108,10 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]")
 
 
-def create_model(model_param: Dict[str, Any], lr: float, epochs: int, device: str, has_clinical_data: bool = False) -> Tuple[DinoFeatureClassifier | StreamingNet]:
+def create_model(param: Dict[str, Any], lr: float, epochs: int, device: str, has_clinical_data: bool = False) -> Tuple[DinoFeatureClassifier | StreamingNet]:
 
     model: Optional[DinoFeatureClassifier | StreamingNet] = None
-    Logger.log("Model: {model_param}")
+    Logger.log("Model: {param}")
 
     if param['type'] == 'vit':
         return DinoFeatureClassifier(clinical_data=has_clinical_data)
