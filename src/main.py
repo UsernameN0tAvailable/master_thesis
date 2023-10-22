@@ -295,7 +295,7 @@ def main():
 
     Logger.log("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type, args.i, args.p)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type, args.i, args.p, clinical_data)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 

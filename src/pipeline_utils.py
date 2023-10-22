@@ -56,9 +56,7 @@ class HotspotDataset(Dataset):
         clinical_data = None
 
         if self.clinical_data is not None:
-            print("fount")
             if img_name in self.clinical_data:
-                print(f'found {img_name} in self.clinical_data')
                 clinical_data = self.clinical_data[img_name]
             else:
                 clinical_data = np.zeros(4)
@@ -124,12 +122,12 @@ class PathsAndLabels():
     def __len__(self):
         return len(self.paths)
 
-    def get_dataset(self, batch_size: int, transform: transforms.Compose, pin_memory: bool, clinical_data = None) -> DataLoader:
+    def get_dataset(self, batch_size: int, transform: transforms.Compose, pin_memory: bool, clinical_data: Optional[Dict[str, np.ndarray]] = None) -> DataLoader:
         dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform, clinical_data=clinical_data)
         sampler = DistributedSampler(dataset, shuffle=True)
         return DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=pin_memory)
 
-def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type, is_pre_training: bool, pin_memory: bool):
+def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type, is_pre_training: bool, pin_memory: bool, clinical_data: Optional[Dict[str, np.ndarray]]):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
 
@@ -189,7 +187,8 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ]
                 ),
-                pin_memory
+                pin_memory,
+                clinical_data=clinical_data
                 ), 
                 validation_data.get_dataset(
                     val_batch_size,
@@ -198,7 +197,8 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ]),
-                    pin_memory
+                    pin_memory,
+                    clinical_data=clinical_data
                     ),
                 test_data.get_dataset(
                     val_batch_size,
@@ -207,7 +207,8 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ]),
-                    pin_memory
+                    pin_memory,
+                    clinical_data=clinical_data
                     ),
                 weights
                 ]
