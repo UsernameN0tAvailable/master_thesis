@@ -42,7 +42,7 @@ class StreamingNet(torch.nn.Module):
         self.scnn.enable() # enable streaming
 
 
-    def step(self, images, labels, criterion, optimizer: Optional[Optimizer]):
+    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Optional[np.ndarray] = None):
         with torch.no_grad():
             bottom_output = self.scnn.forward(images, result_on_cpu=False)
         torch.cuda.empty_cache()

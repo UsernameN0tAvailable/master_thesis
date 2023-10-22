@@ -121,8 +121,8 @@ class DinoFeatureClassifier(DinoFeature):
 
         return y_pixel.squeeze(2).squeeze(2)
 
-    def step(self, images, labels, criterion, optimizer: Optional[Optimizer]):
-        output = self.forward(images, 1, )
+    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Optional[np.ndarray] = None):
+        output = self.forward(images, 1, clinical_data=clinical_data)
         loss = criterion(output, labels.view(-1))
 
         if optimizer is not None:

@@ -10,7 +10,7 @@ import torch
 # # Model definition
 
 class TopCNN(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, has_clinical_data: bool):
         super(TopCNN, self).__init__()
         self.layers = torch.nn.Sequential(
             torch.nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1), torch.nn.ReLU(inplace=True),
@@ -21,10 +21,12 @@ class TopCNN(torch.nn.Module):
             torch.nn.AdaptiveMaxPool2d(1)
         )
 
-        self.classifier = torch.nn.Linear(256, 2)
+        self.classifier = torch.nn.Linear(260 if has_clinical_data else 256, 2)
 
-    def forward(self, x):
+    def forward(self, x, clinical_data: Optional[ndarray]):
         x = self.layers(x)
         x = x.view(x.shape[0], -1)
+        if clinical_data is not None:
+            x = torch.cat((x, torch.from_numpy(clinical_data)), dim=0)
         x = self.classifier(x)
         return x
