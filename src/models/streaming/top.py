@@ -7,6 +7,8 @@
 
 import torch
 
+from typing import Optional
+
 # # Model definition
 
 class TopCNN(torch.nn.Module):
