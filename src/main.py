@@ -1,9 +1,10 @@
 import os
 import argparse
-from typing import Optional
+from typing import Optional, Dict, List
 from sklearn.metrics import precision_recall_fscore_support, f1_score
 import torch
-from torch import Value, nn
+from torch import nn, Tensor
+from torch.types import Number
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from models.dino import DinoFeatureClassifier
@@ -12,7 +13,6 @@ from models.streaming.bottom import BottomCNN, Vit, ResNet
 from models.streaming.scnn import StreamingNet
 import csv
 import numpy as np
-
 import math
 import ssl
 import re
@@ -24,19 +24,18 @@ import wandb
 from pipeline_utils import get_dataloaders, Logger
 from torch.nn import SyncBatchNorm
 
-# pytorch bug
+# fix ssl pytorch bug
 ssl._create_default_https_context = ssl._create_unverified_context
 
+def step(model, optimizer: Optional[AdamW], scheduler: Optional[CosineAnnealingLR], criterion, dataloader, device: str, rank: int, device_count: int, average: Optional[str] ="weighted"):
 
-def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average="weighted"):
-
-    running_loss = torch.tensor(0.0, device=device)
-    true = []
-    preds = []
+    running_loss: Tensor = torch.tensor(0.0, device=device)
+    true: List[np.ndarray] = []
+    preds: List[np.ndarray] = []
 
     for images, labels in dataloader:
-        labels = labels.to(device)
-        images = images.to(device)
+        labels: Tensor = labels.to(device)
+        images: Tensor = images.to(device)
 
         if optimizer is not None: optimizer.zero_grad()
 
@@ -49,17 +48,18 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
 
         if optimizer is not None:
             optimizer.step()
-            scheduler.step()
+            if scheduler is not None: scheduler.step()
+
             optimizer.zero_grad() 
 
     dist.all_reduce(running_loss, op=dist.ReduceOp.AVG)
-    epoch_loss = running_loss.item() / len(dataloader.dataset)
+    epoch_loss: float = running_loss.item() / len(dataloader.dataset)
 
-    true_tensor = torch.tensor(true, device=device)
-    preds_tensor = torch.tensor(preds, device=device)
+    true_tensor: Tensor = torch.tensor(true, device=device)
+    preds_tensor: Tensor = torch.tensor(preds, device=device)
 
-    gathered_true_tensors = [torch.zeros_like(true_tensor) for _ in range(device_count)]
-    gathered_preds_tensors = [torch.zeros_like(preds_tensor) for _ in range(device_count)]
+    gathered_true_tensors: List[Tensor] = [torch.zeros_like(true_tensor) for _ in range(device_count)]
+    gathered_preds_tensors: List[Tensor] = [torch.zeros_like(preds_tensor) for _ in range(device_count)]
 
     dist.all_gather(gathered_true_tensors, true_tensor)
     dist.all_gather(gathered_preds_tensors, preds_tensor)
@@ -109,8 +109,7 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]")
 
 
-def create_model(param, lr: float, epochs: int, load_path: str, device: str):
-
+def create_model(param, lr: float, epochs: int, load_path: str, device: str, has_clinical_data: bool = False):
 
     if param['type'] == 'vit':
         model = DinoFeatureClassifier()
@@ -182,13 +181,12 @@ def create_model(param, lr: float, epochs: int, load_path: str, device: str):
     else:
         raise ValueError(f'{param} Not Implemented')
 
-def load_clinical_data(path: str):
+def load_clinical_data(path: str) -> Dict[str, np.ndarray]:
 
-    out = {}
+    out: Dict[str, np.ndarray] = {}
 
     with open(path, mode='r') as file:
         reader = csv.reader(file)
-
         next(reader)
 
         for row in reader:
@@ -223,12 +221,10 @@ def main():
 
     args = parser.parse_args()
 
-    clinical_data: Optional[str] = None;
+    clinical_data: Optional[Dict[str, np.ndarray]] = None;
 
-    if args.clinical_data:
+    if args.clinical_data is not None:
         clinical_data = load_clinical_data(args.clinical_data)
-
-    print(clinical_data)
 
     if args.t and args.i:
         raise ValueError("Cannot use reduced image size for testing!!")
@@ -237,38 +233,38 @@ def main():
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
-    rank = int(os.environ["LOCAL_RANK"])
+    rank: int = int(os.environ["LOCAL_RANK"])
 
-    device_count = torch.cuda.device_count()
-    device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
+    device_count: int = torch.cuda.device_count()
+    device: str = str(torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu'))
 
     # Memory Load Management
-    local_gpu_memory = int(torch.cuda.get_device_properties(rank).total_memory / (1024 ** 2))
+    local_gpu_memory: int = int(torch.cuda.get_device_properties(rank).total_memory / (1024 ** 2))
 
-    all_local_gpu_memories = torch.zeros(device_count, dtype=torch.int64, device=device) 
+    all_local_gpu_memories: Tensor = torch.zeros(device_count, dtype=torch.int64, device=device) 
     all_local_gpu_memories[rank] = torch.tensor(local_gpu_memory, dtype=torch.int64, device=device)
 
     dist.all_reduce(all_local_gpu_memories, op=dist.ReduceOp.SUM)
-    tot_gpu_memory = all_local_gpu_memories.sum().item()
+    tot_gpu_memory: Number = all_local_gpu_memories.sum().item()
 
-    local_batch_size = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
+    local_batch_size: int = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
  
-    tot_batch_size = torch.tensor(local_batch_size, dtype=torch.int, device=device)
-    dist.all_reduce(tot_batch_size, op=dist.ReduceOp.SUM)
-    tot_batch_size = tot_batch_size.item()
+    tot_batch_size_tensor: Tensor = torch.tensor(local_batch_size, dtype=torch.int, device=device)
+    dist.all_reduce(tot_batch_size_tensor, op=dist.ReduceOp.SUM)
+    tot_batch_size: Number = tot_batch_size_tensor.item()
 
     # Select GPU with lowest load to aggregate results
-    local_mem_per_sample =  local_gpu_memory / local_batch_size
+    local_mem_per_sample: float =  local_gpu_memory / local_batch_size
 
-    all_mems_per_sample = torch.zeros(device_count, dtype=torch.float32, device=device) 
+    all_mems_per_sample: Tensor = torch.zeros(device_count, dtype=torch.float32, device=device) 
     all_mems_per_sample[rank] = torch.tensor(local_mem_per_sample, dtype=torch.float32, device=device)
 
     dist.all_reduce(all_mems_per_sample, op=dist.ReduceOp.SUM)
 
-    smallest_mem_per_sample_index =  int(all_mems_per_sample.argmin())
-    smallest_mem_per_sample = float(all_mems_per_sample[smallest_mem_per_sample_index].item())
+    smallest_mem_per_sample_index: int =  int(all_mems_per_sample.argmin())
+    smallest_mem_per_sample: float = float(all_mems_per_sample[smallest_mem_per_sample_index].item())
 
-    free_memory_per_gpu = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
+    free_memory_per_gpu: List[float] = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
 
     for r, m in enumerate(free_memory_per_gpu):
         if (smallest_mem_per_sample * (all_local_gpu_memories[r].item() / tot_gpu_memory) ) <= m:
@@ -278,23 +274,22 @@ def main():
                 local_batch_size += 1
 
     # aggregating GPU always the one with the most space 
-    main_gpu = free_memory_per_gpu.index(max(free_memory_per_gpu))
+    main_gpu: int = free_memory_per_gpu.index(max(free_memory_per_gpu))
 
-    run_name = f'{args.type}_cv_{args.shift}_oversample_{args.oversample}'
-    checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
+    run_name: str = f'{args.type}_cv_{args.shift}_oversample_{args.oversample}'
+    checkpoint_filepath: str = f'{args.models_dir}/{run_name}.pth'
 
     torch.cuda.set_device(main_gpu)
-
     Logger.init(run_name, main_gpu)
     Logger.log(f'Tot Batch Size: {tot_batch_size}')
     Logger.log(f'Aggregate Results at GPU: {main_gpu}')
     Logger.log(f'Local Batch Size: {local_batch_size}', None)
 
 
-    model, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath, device)
+    model_o, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath, device, clinical_data is not None)
 
 
-    model = model.to(device)
+    model_o = model_o.to(device)
 
     if rank == main_gpu:
         if not args.t:
@@ -310,15 +305,15 @@ def main():
                         },
                     resume=is_resume
                     )
-    assert model is not None
+    assert model_o is not None
 
     Logger.log(f'running distributed on {torch.cuda.device_count()} GPUs')
 
-    model = DistributedDataParallel(model, device_ids=[device], output_device=device)
-    model = SyncBatchNorm.convert_sync_batchnorm(model)
+    model_dist: DistributedDataParallel = DistributedDataParallel(model_o, device_ids=[device], output_device=device)
+    model: SyncBatchNorm = SyncBatchNorm.convert_sync_batchnorm(model_dist)
 
-    optimizer = AdamW(model.parameters(), lr=args.lr)
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) 
+    optimizer: AdamW = AdamW(model.parameters(), lr=args.lr)
+    scheduler: CosineAnnealingLR = CosineAnnealingLR(optimizer, T_max=args.epochs) 
 
     Logger.log("Loading Data ...")
 
@@ -360,6 +355,8 @@ def main():
 
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             Logger.log(f'Epoch: {epoch}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
+
+            assert average_f1 is not None and best_f1 is not None
 
             if best_model_dict is None or best_loss > val_loss or average_f1 > best_f1: 
 

@@ -86,7 +86,7 @@ class DinoFeatureClassifier(DinoFeature):
             n_cls: int = 2,
             dropout: float = 0.1,
             freeze: str = 'backbone.head',
-            type_cls: str = 'nonlinear',
+            clinical_data: bool = False
     ):
         super(DinoFeatureClassifier, self).__init__(
             dino_arch=dino_arch, freeze=freeze
@@ -94,22 +94,15 @@ class DinoFeatureClassifier(DinoFeature):
 
         self.n_cls = n_cls
         self.dropout = torch.nn.Dropout2d(p=dropout)
-        self.type_cls = type_cls
 
-        if type_cls == 'linear':
-            self.cluster = make_linear_clusterer(
-                in_channels=self.n_feats,
-                out_channels=self.n_cls,
-            )
-        elif type_cls == 'nonlinear':
-            self.cluster = make_nonlinear_clusterer(
-                in_channels=self.n_feats,
-                out_channels=self.n_cls,
-            )
-        else:
-            raise NotImplementedError('Unknown classifier type: {}'.format(type_cls))
+        tot_in_channels =  self.n_feats + 4 if clinical_data else self.n_feats
 
-    def forward(self, img, n: Optional[int] = 1):
+        self.cluster = make_nonlinear_clusterer(
+            in_channels=tot_in_channels,
+            out_channels=self.n_cls
+            )
+
+    def forward(self, img, n: Optional[int] = 1, clinical_data = None):
 
         # Compute embedding
         z, _ = super(DinoFeatureClassifier, self).forward(img, n=n)
