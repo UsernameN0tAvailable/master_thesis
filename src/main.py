@@ -108,7 +108,7 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]")
 
 
-def create_model(param: Dict[str, Any], lr: float, epochs: int, device: str, has_clinical_data: bool = False) -> Tuple[DinoFeatureClassifier | StreamingNet]:
+def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = False) -> Tuple[DinoFeatureClassifier | StreamingNet]:
 
     model: Optional[DinoFeatureClassifier | StreamingNet] = None
     Logger.log("Model: {param}")
@@ -121,7 +121,7 @@ def create_model(param: Dict[str, Any], lr: float, epochs: int, device: str, has
         bottom_param = param['bottom']
 
         if top_param == 'cnn':
-            top_net = TopCNN()
+            top_net = TopCNN(has_clinical_data)
         else:
             raise ValueError(f'No {top_param} top net available!!')
 
@@ -249,7 +249,7 @@ def main():
     Logger.log(f'Local Batch Size: {local_batch_size}', None)
 
 
-    model_obj: DinoFeatureClassifier | StreamingNet = create_model(model_type, float(args.lr), int(args.epochs), device, clinical_data is not None)
+    model_obj: DinoFeatureClassifier | StreamingNet = create_model(model_type, device, clinical_data is not None)
 
     is_resume = os.path.isfile(checkpoint_filepath)
 
