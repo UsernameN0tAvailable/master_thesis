@@ -279,6 +279,7 @@ def main():
     best_f1: float = float(0.0)
     best_loss: float = float(1.0)
     epoch: int = int(0)
+    checkpoint_dict = None
 
     if is_resume:
         Logger.log('Loading Stored')
