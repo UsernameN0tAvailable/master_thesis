@@ -1,6 +1,9 @@
 from torch.utils.data import Dataset, DataLoader
 import torch
-from typing import Tuple, List, Dict, Optional
+from typing import List, Dict, Optional, Iterator, Any
+from torch.nn import Parameter
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torchvision import transforms
 from PIL import Image
 import os
@@ -15,11 +18,29 @@ from torch.utils.data.distributed import DistributedSampler
 
 FULL_IMAGE_SIZE=3504
 
+class Optimizer(): 
+
+    def __init__(self, optimizer: AdamW, scheduler: CosineAnnealingLR): 
+        self.optimizer = optimizer
+        self.scheduler = scheduler
+
+    @classmethod
+    def new(cls, model_paramters: Iterator[Parameter], lr: float, epochs: int, state_dict: Optional[Dict[str, Any]]) -> 'Optimizer':
+        optimizer: AdamW = AdamW(model_paramters, lr=lr)
+        if state_dict is not None and 'optimizer' in state_dict:
+            optimizer.load_state_dict(state_dict['optimizer'])
+
+        scheduler: CosineAnnealingLR = CosineAnnealingLR(optimizer, T_max=epochs)
+        if state_dict is not None and 'scheduler' in state_dict:
+            scheduler.load_state_dict(state_dict['scheduler'])
+        return Optimizer(optimizer, scheduler)
+
 class HotspotDataset(Dataset):
-    def __init__(self, image_dir: str, splits: List[str], labels: List[int], transform):
+    def __init__(self, image_dir: str, splits: List[str], labels: List[int], transform, clinical_data):
         self.image_dir = image_dir
         self.splits = splits
         self.labels = labels
+        self.clinical_data = clinical_data
         self.transform = transform
 
     def __len__(self):
@@ -31,7 +52,16 @@ class HotspotDataset(Dataset):
         label = self.labels[idx]
         image = Image.open(img_path)
         image = self.transform(image)
-        return image, label
+
+        clinical_data = None
+
+        if self.clinical_data is not None:
+            if img_name in self.clinical_data:
+                clinical_data = self.clinical_data[img_name]
+            else:
+                clinical_data = np.zeros(4)
+
+        return image, label, clinical_data
 
 class PathsAndLabels():
     def __init__(self, data_dir: str):
@@ -92,12 +122,12 @@ class PathsAndLabels():
     def __len__(self):
         return len(self.paths)
 
-    def get_dataset(self, batch_size: int, transform, pin_memory: bool) -> DataLoader:
-        dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform)
+    def get_dataset(self, batch_size: int, transform: transforms.Compose, pin_memory: bool, clinical_data: Optional[Dict[str, np.ndarray]] = None) -> DataLoader:
+        dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform, clinical_data=clinical_data)
         sampler = DistributedSampler(dataset, shuffle=True)
         return DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=pin_memory)
 
-def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type, is_pre_training: bool, pin_memory: bool):
+def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type, is_pre_training: bool, pin_memory: bool, clinical_data: Optional[Dict[str, np.ndarray]]):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
 
@@ -157,7 +187,8 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ]
                 ),
-                pin_memory
+                pin_memory,
+                clinical_data=clinical_data
                 ), 
                 validation_data.get_dataset(
                     val_batch_size,
@@ -166,7 +197,8 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ]),
-                    pin_memory
+                    pin_memory,
+                    clinical_data=clinical_data
                     ),
                 test_data.get_dataset(
                     val_batch_size,
@@ -175,7 +207,8 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
                     ]),
-                    pin_memory
+                    pin_memory,
+                    clinical_data=clinical_data
                     ),
                 weights
                 ]

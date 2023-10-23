@@ -7,7 +7,7 @@ import math
 import os
 from dataclasses import dataclass
 from itertools import repeat
-from typing import NamedTuple, Union, List
+from typing import NamedTuple, Union, List, Optional
 
 import numpy as np
 import torch
@@ -15,10 +15,14 @@ import torch.autograd
 import torch.backends
 import torch.nn.functional
 
+from torch import Tensor
+
 import collections.abc as container_abcs
 
 from torch.nn.modules.conv import _ConvNd
 from torch.nn.modules.utils import _pair
+
+from pipeline_utils import Optimizer
 
 class StreamingNet(torch.nn.Module):
 
@@ -40,16 +44,17 @@ class StreamingNet(torch.nn.Module):
         self.scnn.enable() # enable streaming
 
 
-    def step(self, images, labels, criterion, is_train: bool):
+    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor):
         with torch.no_grad():
             bottom_output = self.scnn.forward(images, result_on_cpu=False)
         torch.cuda.empty_cache()
         bottom_output.requires_grad = True 
-        top_output = self.top_net(bottom_output)
+
+        top_output = self.top_net(bottom_output, clinical_data)
 
         loss = criterion(top_output, labels.view(-1))
 
-        if is_train:
+        if optimizer is not None:
             loss.backward()
             self.scnn.backward(images, bottom_output.grad)
 
@@ -62,7 +67,6 @@ def forward_amp_decorator(func):
     return func
 def backward_amp_decorator(func):
     return func
-
 
 # inspired by torch/nn/modules/utils.py
 def _ntuple(n):

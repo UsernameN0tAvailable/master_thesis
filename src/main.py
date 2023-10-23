@@ -1,15 +1,18 @@
 import os
 import argparse
+from typing import Optional, Dict, List, Tuple, Any
 from sklearn.metrics import precision_recall_fscore_support, f1_score
 import torch
-from torch import Value, nn
+from torch import nn, Tensor
+from torch.types import Number
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from models.dino import DinoFeatureClassifier
 from models.streaming.top import TopCNN
 from models.streaming.bottom import BottomCNN, Vit, ResNet
 from models.streaming.scnn import StreamingNet
-
+import csv
+import numpy as np
 import math
 import ssl
 import re
@@ -18,27 +21,26 @@ import re
 from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
 import wandb
-from pipeline_utils import get_dataloaders, Logger
-
+from pipeline_utils import get_dataloaders, Logger, Optimizer
 from torch.nn import SyncBatchNorm
 
-# pytorch bug
+# fix ssl pytorch bug
 ssl._create_default_https_context = ssl._create_unverified_context
 
+def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: str, rank: int, device_count: int, average: Optional[str] ="weighted"):
 
-def step(model, optimizer, scheduler, criterion, dataloader, device, rank, device_count, average="weighted"):
+    running_loss: Tensor = torch.tensor(0.0, device=device)
+    true: List[np.ndarray] = []
+    preds: List[np.ndarray] = []
 
-    running_loss = torch.tensor(0.0, device=device)
-    true = []
-    preds = []
+    for images, labels, clinical_data in dataloader:
+        labels: Tensor = labels.to(device)
+        images: Tensor = images.to(device)
+        clinical_data: Tensor = clinical_data.to(device)
 
-    for images, labels in dataloader:
-        labels = labels.to(device)
-        images = images.to(device)
+        if optimizer is not None: optimizer.optimizer.zero_grad()
 
-        if optimizer is not None: optimizer.zero_grad()
-
-        output, loss = model.module.step(images, labels, criterion, optimizer is not None)
+        output, loss = model.module.step(images, labels, criterion, optimizer, clinical_data)
         running_loss += loss.item() * images.size(0)
         predicted = torch.max(output.data, 1)[1]
         
@@ -46,18 +48,18 @@ def step(model, optimizer, scheduler, criterion, dataloader, device, rank, devic
         preds.extend(predicted.cpu().numpy())
 
         if optimizer is not None:
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad() 
+            optimizer.optimizer.step()
+            optimizer.scheduler.step()
+            optimizer.optimizer.zero_grad() 
 
     dist.all_reduce(running_loss, op=dist.ReduceOp.AVG)
-    epoch_loss = running_loss.item() / len(dataloader.dataset)
+    epoch_loss: float = running_loss.item() / len(dataloader.dataset)
 
-    true_tensor = torch.tensor(true, device=device)
-    preds_tensor = torch.tensor(preds, device=device)
+    true_tensor: Tensor = torch.tensor(true, device=device)
+    preds_tensor: Tensor = torch.tensor(preds, device=device)
 
-    gathered_true_tensors = [torch.zeros_like(true_tensor) for _ in range(device_count)]
-    gathered_preds_tensors = [torch.zeros_like(preds_tensor) for _ in range(device_count)]
+    gathered_true_tensors: List[Tensor] = [torch.zeros_like(true_tensor) for _ in range(device_count)]
+    gathered_preds_tensors: List[Tensor] = [torch.zeros_like(preds_tensor) for _ in range(device_count)]
 
     dist.all_gather(gathered_true_tensors, true_tensor)
     dist.all_gather(gathered_preds_tensors, preds_tensor)
@@ -107,38 +109,20 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]")
 
 
-def create_model(param, lr: float, epochs: int, load_path: str, device: str):
+def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = False) -> Tuple[DinoFeatureClassifier | StreamingNet]:
 
+    model: Optional[DinoFeatureClassifier | StreamingNet] = None
+    Logger.log("Model: {param}")
 
     if param['type'] == 'vit':
-        model = DinoFeatureClassifier()
-        if os.path.isfile(load_path):
-            Logger.log('Loading stored ViT')
-            checkpoint = torch.load(load_path)
-
-            model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model'].items()}
-
-            model.load_state_dict(model_state_dict)
-
-            optimizer = AdamW(model.parameters(), lr=lr)
-            optimizer.load_state_dict(checkpoint['optimizer'])
-
-            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
-            scheduler.load_state_dict(checkpoint['scheduler'])
-
-            return model, optimizer, scheduler, float(checkpoint['best_f1']), float(checkpoint['best_loss']), int(checkpoint['epoch']), True
-        else:
-            Logger.log('Creating New ViT')
-            optimizer = AdamW(model.parameters(), lr=lr)
-            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
-            return model, optimizer, scheduler, 0.0, float('inf'), 0, False
+        return DinoFeatureClassifier(clinical_data=has_clinical_data)
     elif param['type'] == 'stream':
 
         top_param = param['top']
         bottom_param = param['bottom']
 
         if top_param == 'cnn':
-            top_net = TopCNN()
+            top_net = TopCNN(has_clinical_data)
         else:
             raise ValueError(f'No {top_param} top net available!!')
 
@@ -155,30 +139,30 @@ def create_model(param, lr: float, epochs: int, load_path: str, device: str):
         else:
             raise ValueError(f'No {bottom_param} bottom net available!!')
 
-
-        if os.path.isfile(load_path):
-            Logger.log(f'Loading stored {param}')
-            checkpoint = torch.load(load_path)
-            model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['model'].items()}
-
-            model = StreamingNet(top_net.to(device), bottom_net.to(device), param['value']) 
-            model.load_state_dict(model_state_dict)
-
-            optimizer = AdamW(model.parameters(), lr=lr)
-            optimizer.load_state_dict(checkpoint['optimizer'])
-
-            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
-            scheduler.load_state_dict(checkpoint['scheduler'])
-
-            return model, optimizer, scheduler, float(checkpoint['best_f1']), float(checkpoint['best_loss']), int(checkpoint['epoch']), True
-        else:
-            Logger.log(f'Creating New {param}')
-            model = StreamingNet(top_net.to(device), bottom_net.to(device), param['value'])
-            optimizer = AdamW(model.parameters(), lr=lr)
-            scheduler = CosineAnnealingLR(optimizer, T_max=epochs) 
-            return model, optimizer, scheduler, 0.0, float('inf'), 0, False
+        return StreamingNet(top_net.to(device), bottom_net.to(device), param['value']) 
     else:
         raise ValueError(f'{param} Not Implemented')
+
+    return model
+
+
+def load_clinical_data(path: str) -> Dict[str, np.ndarray]:
+
+    out: Dict[str, np.ndarray] = {}
+
+    with open(path, mode='r') as file:
+        reader = csv.reader(file)
+        next(reader)
+
+        for row in reader:
+            [name, arg0, arg1, arg2, arg3] = row
+            out[name.replace(".", "dot")] = np.array([
+                float(1.0 if arg0 == "Yes" or arg0 == "yes" else 0.0),
+                float(arg1),
+                float(arg2),
+                float(arg3)
+                ], dtype=np.float32)
+    return out
 
 
 def main():
@@ -197,8 +181,14 @@ def main():
     parser.add_argument("-t", action="store_true", default=False, help="Test only run")
     parser.add_argument("-i", action="store_true", default=False, help="Train with smaller images")
     parser.add_argument("-p", action="store_true", default=False, help="Pin Memory for more efficient memory management")
+    parser.add_argument("--clinical_data", type=str, default=None, help="Additional clinical data file path for the classification net")
 
     args = parser.parse_args()
+
+    clinical_data: Optional[Dict[str, np.ndarray]] = None;
+
+    if args.clinical_data is not None:
+        clinical_data = load_clinical_data(args.clinical_data)
 
     if args.t and args.i:
         raise ValueError("Cannot use reduced image size for testing!!")
@@ -207,38 +197,38 @@ def main():
 
     dist.init_process_group(backend='nccl', init_method='env://')
 
-    rank = int(os.environ["LOCAL_RANK"])
+    rank: int = int(os.environ["LOCAL_RANK"])
 
-    device_count = torch.cuda.device_count()
-    device = torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu')
+    device_count: int = torch.cuda.device_count()
+    device: str = str(torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu'))
 
     # Memory Load Management
-    local_gpu_memory = int(torch.cuda.get_device_properties(rank).total_memory / (1024 ** 2))
+    local_gpu_memory: int = int(torch.cuda.get_device_properties(rank).total_memory / (1024 ** 2))
 
-    all_local_gpu_memories = torch.zeros(device_count, dtype=torch.int64, device=device) 
+    all_local_gpu_memories: Tensor = torch.zeros(device_count, dtype=torch.int64, device=device) 
     all_local_gpu_memories[rank] = torch.tensor(local_gpu_memory, dtype=torch.int64, device=device)
 
     dist.all_reduce(all_local_gpu_memories, op=dist.ReduceOp.SUM)
-    tot_gpu_memory = all_local_gpu_memories.sum().item()
+    tot_gpu_memory: Number = all_local_gpu_memories.sum().item()
 
-    local_batch_size = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
+    local_batch_size: int = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
  
-    tot_batch_size = torch.tensor(local_batch_size, dtype=torch.int, device=device)
-    dist.all_reduce(tot_batch_size, op=dist.ReduceOp.SUM)
-    tot_batch_size = tot_batch_size.item()
+    tot_batch_size_tensor: Tensor = torch.tensor(local_batch_size, dtype=torch.int, device=device)
+    dist.all_reduce(tot_batch_size_tensor, op=dist.ReduceOp.SUM)
+    tot_batch_size: Number = tot_batch_size_tensor.item()
 
     # Select GPU with lowest load to aggregate results
-    local_mem_per_sample =  local_gpu_memory / local_batch_size
+    local_mem_per_sample: float =  local_gpu_memory / local_batch_size
 
-    all_mems_per_sample = torch.zeros(device_count, dtype=torch.float32, device=device) 
+    all_mems_per_sample: Tensor = torch.zeros(device_count, dtype=torch.float32, device=device) 
     all_mems_per_sample[rank] = torch.tensor(local_mem_per_sample, dtype=torch.float32, device=device)
 
     dist.all_reduce(all_mems_per_sample, op=dist.ReduceOp.SUM)
 
-    smallest_mem_per_sample_index =  int(all_mems_per_sample.argmin())
-    smallest_mem_per_sample = float(all_mems_per_sample[smallest_mem_per_sample_index].item())
+    smallest_mem_per_sample_index: int =  int(all_mems_per_sample.argmin())
+    smallest_mem_per_sample: float = float(all_mems_per_sample[smallest_mem_per_sample_index].item())
 
-    free_memory_per_gpu = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
+    free_memory_per_gpu: List[float] = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
 
     for r, m in enumerate(free_memory_per_gpu):
         if (smallest_mem_per_sample * (all_local_gpu_memories[r].item() / tot_gpu_memory) ) <= m:
@@ -248,23 +238,23 @@ def main():
                 local_batch_size += 1
 
     # aggregating GPU always the one with the most space 
-    main_gpu = free_memory_per_gpu.index(max(free_memory_per_gpu))
+    main_gpu: int = free_memory_per_gpu.index(max(free_memory_per_gpu))
 
-    run_name = f'{args.type}_cv_{args.shift}_oversample_{args.oversample}'
-    checkpoint_filepath = f'{args.models_dir}/{run_name}.pth'
+    run_name: str = f'{args.type}_cv_{args.shift}_oversample_{args.oversample}'
+    checkpoint_filepath: str = f'{args.models_dir}/{run_name}.pth'
 
     torch.cuda.set_device(main_gpu)
-
     Logger.init(run_name, main_gpu)
     Logger.log(f'Tot Batch Size: {tot_batch_size}')
     Logger.log(f'Aggregate Results at GPU: {main_gpu}')
     Logger.log(f'Local Batch Size: {local_batch_size}', None)
 
 
-    model, optimizer, scheduler, best_f1, best_loss, epoch, is_resume =  create_model(model_type, float(args.lr), int(args.epochs), checkpoint_filepath, device)
+    model_obj: DinoFeatureClassifier | StreamingNet = create_model(model_type, device, clinical_data is not None)
 
+    is_resume = os.path.isfile(checkpoint_filepath)
 
-    model = model.to(device)
+    model_obj = model_obj.to(device)
 
     if rank == main_gpu:
         if not args.t:
@@ -280,19 +270,33 @@ def main():
                         },
                     resume=is_resume
                     )
-    assert model is not None
+    assert model_obj is not None
 
     Logger.log(f'running distributed on {torch.cuda.device_count()} GPUs')
 
-    model = DistributedDataParallel(model, device_ids=[device], output_device=device)
-    model = SyncBatchNorm.convert_sync_batchnorm(model)
+    model_dist: DistributedDataParallel = DistributedDataParallel(model_obj, device_ids=[device], output_device=device)
+    model: SyncBatchNorm = SyncBatchNorm.convert_sync_batchnorm(model_dist)
 
-    optimizer = AdamW(model.parameters(), lr=args.lr)
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs) 
+    best_f1: float = float(0.0)
+    best_loss: float = float(1.0)
+    epoch: int = int(0)
+    checkpoint_dict = None
+
+    if is_resume:
+        Logger.log('Loading Stored')
+        checkpoint_dict = torch.load(load_path)
+        model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint_dict['model'].items()}
+        model.load_state_dict(model_state_dict)
+
+        best_f1 = float(checkpoint_dict["best_f1"])
+        best_loss = float(checkpoint_dict["best_loss"])
+        epoch = int(checkpoint_dict["epoch"])
+
+    optimizer: Optimizer = Optimizer.new(model.parameters(), float(args.lr), int(args.epochs), checkpoint_dict)
 
     Logger.log("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type, args.i, args.p)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type, args.i, args.p, clinical_data)
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
@@ -312,16 +316,15 @@ def main():
 
     flag_tensor = torch.zeros(1).to(device)
 
-
     best_model_dict = None
 
     while True and not args.t:
         model.train()
         train_dataloader.sampler.set_epoch(epoch)
-        train_loss, train_precision, train_recall, train_f1, _ = step(model, optimizer, scheduler, criterion, train_dataloader, device, rank, device_count)
+        train_loss, train_precision, train_recall, train_f1, _ = step(model, optimizer, criterion, train_dataloader, device, rank, device_count)
         model.eval()
         val_dataloader.sampler.set_epoch(epoch)
-        val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, None, criterion, val_dataloader, device, rank, device_count, average=None)
+        val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, criterion, val_dataloader, device, rank, device_count, average=None)
 
         if rank == main_gpu:
 
@@ -330,6 +333,8 @@ def main():
 
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
             Logger.log(f'Epoch: {epoch}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
+
+            assert average_f1 is not None and best_f1 is not None
 
             if best_model_dict is None or best_loss > val_loss or average_f1 > best_f1: 
 
@@ -348,8 +353,8 @@ def main():
             torch.save({
                 'epoch': epoch,
                 'model': best_model_dict, 
-                'optimizer': optimizer.state_dict(),
-                'scheduler': scheduler.state_dict(),
+                'optimizer': optimizer.optimizer.state_dict(),
+                'scheduler': optimizer.scheduler.state_dict(),
                 'best_f1': best_f1,
                 'best_loss': best_loss,
                 },
@@ -368,7 +373,7 @@ def main():
         model = model.to(device)
         model.eval() 
         test_dataloader.sampler.set_epoch(epoch)
-        test_loss, test_precision, test_recall, test_f1, _ = step(model, None, None, criterion, test_dataloader, device, rank, device_count, average=None)
+        test_loss, test_precision, test_recall, test_f1, _ = step(model, None, criterion, test_dataloader, device, rank, device_count, average=None)
         if rank == main_gpu:
             wandb.finish()
             Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
