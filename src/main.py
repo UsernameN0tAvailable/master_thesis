@@ -251,8 +251,23 @@ def main():
 
 
     model_obj: DinoFeatureClassifier | StreamingNet = create_model(model_type, device, clinical_data is not None)
+	
+    best_f1: float = float(0.0)
+    best_loss: float = float(1.0)
+    epoch: int = int(0)
+    checkpoint_dict = None
 
     is_resume = os.path.isfile(checkpoint_filepath)
+
+    if is_resume:
+        Logger.log('Loading Stored')
+        checkpoint_dict = torch.load(checkpoint_filepath)
+        model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint_dict['model'].items()}
+        model_obj.load_state_dict(model_state_dict)
+
+        best_f1 = float(checkpoint_dict["best_f1"])
+        best_loss = float(checkpoint_dict["best_loss"])
+        epoch = int(checkpoint_dict["epoch"])
 
     model_obj = model_obj.to(device)
 
@@ -276,21 +291,6 @@ def main():
 
     model_dist: DistributedDataParallel = DistributedDataParallel(model_obj, device_ids=[device], output_device=device)
     model: SyncBatchNorm = SyncBatchNorm.convert_sync_batchnorm(model_dist)
-
-    best_f1: float = float(0.0)
-    best_loss: float = float(1.0)
-    epoch: int = int(0)
-    checkpoint_dict = None
-
-    if is_resume:
-        Logger.log('Loading Stored')
-        checkpoint_dict = torch.load(checkpoint_filepath)
-        model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint_dict['model'].items()}
-        model.load_state_dict(model_state_dict)
-
-        best_f1 = float(checkpoint_dict["best_f1"])
-        best_loss = float(checkpoint_dict["best_loss"])
-        epoch = int(checkpoint_dict["epoch"])
 
     optimizer: Optimizer = Optimizer.new(model.parameters(), float(args.lr), int(args.epochs), checkpoint_dict)
 
