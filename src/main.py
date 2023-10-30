@@ -284,7 +284,7 @@ def main():
 
     if is_resume:
         Logger.log('Loading Stored')
-        checkpoint_dict = torch.load(load_path)
+        checkpoint_dict = torch.load(checkpoint_filepath)
         model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint_dict['model'].items()}
         model.load_state_dict(model_state_dict)
 
