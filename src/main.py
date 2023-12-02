@@ -202,6 +202,9 @@ def main():
 
     model_type = validate_model_and_extract(args.type)
 
+    if model_type['type'] == 'header_only' and clinical_data is None:
+        raise ValueError("Cannot Execture with header only without clinical data")
+
     dist.init_process_group(backend='nccl', init_method='env://')
 
     rank: int = int(os.environ["LOCAL_RANK"])
