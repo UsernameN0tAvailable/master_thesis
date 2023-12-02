@@ -36,7 +36,8 @@ class Optimizer():
         return Optimizer(optimizer, scheduler)
 
 class HotspotDataset(Dataset):
-    def __init__(self, image_dir: str, splits: List[str], labels: List[int], transform, clinical_data):
+    def __init__(self, image_dir: str, splits: List[str], labels: List[int], transform, clinical_data, mlp_header_only: bool = False):
+        self.mlp_header_only =  mlp_header_only
         self.image_dir = image_dir
         self.splits = splits
         self.labels = labels
@@ -50,8 +51,12 @@ class HotspotDataset(Dataset):
         img_name = self.splits[idx]
         img_path = os.path.join(self.image_dir, f'{img_name}.png')
         label = self.labels[idx]
-        image = Image.open(img_path)
-        image = self.transform(image)
+
+        if not self.mlp_header_only:
+            image = Image.open(img_path)
+            image = self.transform(image)
+        else:
+            image = torch.empty(0)
 
         clinical_data = None
 
@@ -64,7 +69,8 @@ class HotspotDataset(Dataset):
         return image, label, clinical_data
 
 class PathsAndLabels():
-    def __init__(self, data_dir: str):
+    def __init__(self, data_dir: str, header_only: bool = False):
+        self.header_only = header_only;
         self.paths = []
         self.labels = []
         self.data_dir = data_dir
@@ -103,8 +109,6 @@ class PathsAndLabels():
             for img_name in negatives:
                 self.add_sample(img_name, '0')
 
-
-
             oversample_l = ((neg_l / (( 1.0 - oversample) * 10) ) * 10 - neg_l)
 
             # over sampling
@@ -123,19 +127,19 @@ class PathsAndLabels():
         return len(self.paths)
 
     def get_dataset(self, batch_size: int, transform: transforms.Compose, pin_memory: bool, clinical_data: Optional[Dict[str, np.ndarray]] = None) -> DataLoader:
-        dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform, clinical_data=clinical_data)
+        dataset = HotspotDataset(self.data_dir, self.paths, self.labels, transform, clinical_data=clinical_data, mlp_header_only=self.header_only)
         sampler = DistributedSampler(dataset, shuffle=True)
         return DataLoader(dataset, batch_size=batch_size, sampler=sampler, pin_memory=pin_memory)
 
-def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type, is_pre_training: bool, pin_memory: bool, clinical_data: Optional[Dict[str, np.ndarray]]):
+def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: float, model_type, is_pre_training: bool, pin_memory: bool, clinical_data: Optional[Dict[str, np.ndarray]], header_only: bool = False):
     with open(os.path.join(data_dir, 'splits.json'), 'r') as f:
         splits = json.load(f)
 
     image_dir = os.path.join(data_dir, 'hotspots-png')
 
-    train_data =  PathsAndLabels(image_dir)
-    validation_data =  PathsAndLabels(image_dir)
-    test_data = PathsAndLabels(image_dir)
+    train_data =  PathsAndLabels(image_dir, header_only=header_only)
+    validation_data =  PathsAndLabels(image_dir, header_only=header_only)
+    test_data = PathsAndLabels(image_dir, header_only=header_only)
 
     for split_n in range(5):
         split_index = (split_n - shift) % 5

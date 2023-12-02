@@ -8,6 +8,7 @@ from torch.types import Number
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from models.dino import DinoFeatureClassifier
+from models.mlp_header import MLPHeader
 from models.streaming.top import TopCNN
 from models.streaming.bottom import BottomCNN, Vit, ResNet
 from models.streaming.scnn import StreamingNet
@@ -106,10 +107,14 @@ def validate_model_and_extract(s):
         
         return {'type': 'stream', 'top': top_m, 'bottom': bottom_m, 'value': n}
 
-    raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]")
+    header_match = re.match(r'^header_only', s)
+    if header_match:
+        return {'type': 'header_only'}
+
+    raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]\n- header_only")
 
 
-def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = False) -> Tuple[DinoFeatureClassifier | StreamingNet]:
+def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = False) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
 
     model: Optional[DinoFeatureClassifier | StreamingNet] = None
     Logger.log("Model: {param}")
@@ -140,6 +145,8 @@ def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = F
             raise ValueError(f'No {bottom_param} bottom net available!!')
 
         return StreamingNet(top_net.to(device), bottom_net.to(device), param['value']) 
+    elif param['type'] == 'header_only':
+        return MLPHeader()
     else:
         raise ValueError(f'{param} Not Implemented')
 
@@ -250,7 +257,7 @@ def main():
     Logger.log(f'Local Batch Size: {local_batch_size}', None)
 
 
-    model_obj: DinoFeatureClassifier | StreamingNet = create_model(model_type, device, clinical_data is not None)
+    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device, clinical_data is not None)
 	
     best_f1: float = float(0.0)
     best_loss: float = float(1.0)
@@ -296,7 +303,7 @@ def main():
 
     Logger.log("Loading Data ...")
 
-    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type, args.i, args.p, clinical_data)
+    train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type, args.i, args.p, clinical_data, header_only=model_type['type'] == 'header_only')
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
