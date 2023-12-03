@@ -26,7 +26,6 @@ class BottomCNN(nn.Module):  # Not subclassing from nn.Sequential anymore
         x = self.conv2(x)
         x = self.relu2(x)
         x = self.maxpool2(x)
-
  
         return x
 

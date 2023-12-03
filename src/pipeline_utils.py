@@ -1,6 +1,7 @@
+from numpy.typing import NDArray
 from torch.utils.data import Dataset, DataLoader
 import torch
-from typing import List, Dict, Optional, Iterator, Any
+from typing import List, Dict, Optional, Iterator, Any, Tuple
 from torch.nn import Parameter
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -15,6 +16,7 @@ import numpy as np
 import random
 
 from torch.utils.data.distributed import DistributedSampler
+from torch import Tensor
 
 FULL_IMAGE_SIZE=3504
 
@@ -47,7 +49,7 @@ class HotspotDataset(Dataset):
     def __len__(self):
         return len(self.splits)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx) -> Tuple[Tensor, Tensor, NDArray, str] :
         img_name = self.splits[idx]
         img_path = os.path.join(self.image_dir, f'{img_name}.png')
         label = self.labels[idx]
@@ -58,15 +60,12 @@ class HotspotDataset(Dataset):
         else:
             image = torch.empty(0)
 
-        clinical_data = None
+        if self.clinical_data is not None and img_name in self.clinical_data:
+            clinical_data = self.clinical_data[img_name]
+        else:
+            clinical_data = np.zeros(4)
 
-        if self.clinical_data is not None:
-            if img_name in self.clinical_data:
-                clinical_data = self.clinical_data[img_name]
-            else:
-                clinical_data = np.zeros(4)
-
-        return image, label, clinical_data
+        return image, label, clinical_data, img_name
 
 class PathsAndLabels():
     def __init__(self, data_dir: str, header_only: bool = False):

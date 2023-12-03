@@ -25,16 +25,18 @@ import wandb
 from pipeline_utils import get_dataloaders, Logger, Optimizer
 from torch.nn import SyncBatchNorm
 
+from PIL import Image
+
 # fix ssl pytorch bug
 ssl._create_default_https_context = ssl._create_unverified_context
 
-def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: str, rank: int, device_count: int, average: Optional[str] ="weighted"):
+def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: str, rank: int, device_count: int, average: Optional[str] ="weighted", data_dir: Optional[str] = None):
 
     running_loss: Tensor = torch.tensor(0.0, device=device)
     true: List[np.ndarray] = []
     preds: List[np.ndarray] = []
 
-    for images, labels, clinical_data in dataloader:
+    for images, labels, clinical_data, img_names  in dataloader:
         labels: Tensor = labels.to(device)
         images: Tensor = images.to(device)
         clinical_data: Tensor = clinical_data.to(device)
@@ -52,6 +54,18 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
             optimizer.optimizer.step()
             optimizer.scheduler.step()
             optimizer.optimizer.zero_grad() 
+        # store all activation maps
+        elif data_dir is not None and model.module.store_activation_maps:
+            maps_path = f'{data_dir}/maps/{model.module.name}'
+            if not os.path.exists(maps_path): os.makedirs(maps_path)
+
+            print("SAVING MAPS")
+            activation_maps = model.module.get_map()
+            #for i, map_tensor in enumerate(activation_maps):
+                #map_tensor = map_tensor.mul(255).byte()
+                #image = Image.fromarray(map_tensor.cpu().numpy().transpose(1,2,0), "RGB")
+                #image.save(f'{maps_path}/{img_names[i]}_map.png')
+
 
     dist.all_reduce(running_loss, op=dist.ReduceOp.AVG)
     epoch_loss: float = running_loss.item() / len(dataloader.dataset)
@@ -114,10 +128,10 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]\n- header_only")
 
 
-def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = False) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
+def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = False, activation_map: bool = False) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
 
     model: Optional[DinoFeatureClassifier | StreamingNet] = None
-    Logger.log("Model: {param}")
+    Logger.log(f"Model: {param}")
 
     if param['type'] == 'vit':
         return DinoFeatureClassifier(clinical_data=has_clinical_data)
@@ -144,7 +158,7 @@ def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = F
         else:
             raise ValueError(f'No {bottom_param} bottom net available!!')
 
-        return StreamingNet(top_net.to(device), bottom_net.to(device), param['value']) 
+        return StreamingNet(param['type'], top_net.to(device), bottom_net.to(device), param['value'], store_activation_maps=activation_map) 
     elif param['type'] == 'header_only':
         return MLPHeader()
     else:
@@ -188,9 +202,13 @@ def main():
     parser.add_argument("-t", action="store_true", default=False, help="Test only run")
     parser.add_argument("-i", action="store_true", default=False, help="Train with smaller images")
     parser.add_argument("-p", action="store_true", default=False, help="Pin Memory for more efficient memory management")
+    parser.add_argument("-m", action="store_true", default=False, help="If True cnn will generate saliency maps and vit will generate attention maps -> only applicable on test!")
     parser.add_argument("--clinical_data", type=str, default=None, help="Additional clinical data file path for the classification net")
 
     args = parser.parse_args()
+
+    if args.m and not args.t:
+        raise ValueError("Cannot store maps if not on testing phase!")
 
     clinical_data: Optional[Dict[str, np.ndarray]] = None;
 
@@ -260,7 +278,7 @@ def main():
     Logger.log(f'Local Batch Size: {local_batch_size}', None)
 
 
-    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device, clinical_data is not None)
+    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device, clinical_data is not None, activation_map=args.m)
 	
     best_f1: float = float(0.0)
     best_loss: float = float(1.0)
@@ -383,7 +401,7 @@ def main():
         model = model.to(device)
         model.eval() 
         test_dataloader.sampler.set_epoch(epoch)
-        test_loss, test_precision, test_recall, test_f1, _ = step(model, None, criterion, test_dataloader, device, rank, device_count, average=None)
+        test_loss, test_precision, test_recall, test_f1, _ = step(model, None, criterion, test_dataloader, device, rank, device_count, average=None, data_dir=args.data_dir)
         if rank == main_gpu:
             wandb.finish()
             Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)

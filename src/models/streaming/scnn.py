@@ -28,45 +28,44 @@ class StreamingNet(torch.nn.Module):
 
     def to(self, device):
         self.top_net.to(device)
-        self.bottom_net.to(device)
+        self.scnn.stream_module.to(device)
         return self
  
-    def __init__(self, top_net, bottom_net, tile_size: int):
+    def __init__(self, name: str, top_net, bottom_net, tile_size: int, store_activation_maps: bool = False):
         super().__init__()
+        self.name = name 
+        self.store_activation_maps = True 
         self.top_net = top_net
 
         for mod in self.top_net.modules():
             if isinstance(mod, torch.nn.Conv2d):
                 torch.nn.init.kaiming_normal_(mod.weight, nonlinearity='relu')
 
-        self.bottom_net = bottom_net
-        self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False)
-        self.scnn.enable() # enable streaming
+        self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False, saliency=store_activation_maps)
 
 
     def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor):
         with torch.no_grad():
             bottom_output = self.scnn.forward(images, result_on_cpu=False)
-        torch.cuda.empty_cache()
         bottom_output.requires_grad = True 
 
         top_output = self.top_net(bottom_output, clinical_data)
 
         loss = criterion(top_output, labels.view(-1))
 
-        if optimizer is not None:
+        if optimizer is not None or self.store_activation_maps:
             loss.backward()
             self.scnn.backward(images, bottom_output.grad)
 
         return top_output, loss
 
+    def get_map(self) -> Tensor:
+        if not self.store_activation_maps:
+            raise ValueError("Cannot get maps when they're not gathered!")
+        return self.scnn.saliency_map
+
 
 # from torch.nn.grad import _grad_input_padding
-
-def forward_amp_decorator(func): 
-    return func
-def backward_amp_decorator(func):
-    return func
 
 # inspired by torch/nn/modules/utils.py
 def _ntuple(n):
@@ -117,7 +116,6 @@ class Lost:
 
 class StreamingConv2dF(torch.autograd.Function):
     @staticmethod
-    @forward_amp_decorator
     def forward(ctx, inpt, weight, bias, stride, padding, dilation, groups, grad_lost, seen_indices, output_stride, input_loc):
         ctx.save_for_backward(inpt, weight, bias)
         ctx.stride = stride
@@ -131,7 +129,6 @@ class StreamingConv2dF(torch.autograd.Function):
         return torch.nn.functional.conv2d(inpt, weight, bias, stride, padding, dilation, groups)
 
     @staticmethod
-    @backward_amp_decorator
     def backward(ctx, grad_output):
         inpt, weight, bias = ctx.saved_variables
         grad = grad_weight = grad_bias = None
@@ -156,6 +153,8 @@ class StreamingConv2dF(torch.autograd.Function):
             grad_in = None
 
         grad = grad_output
+
+
 
         lost_top = grad_lost.top if not sides.top else 0
         lost_bottom = grad_lost.bottom if not sides.bottom else 0
@@ -251,7 +250,7 @@ class StreamingConv2dF(torch.autograd.Function):
             del relevant_grad
         else:
             # if self.verbose and not hasattr(self, '_inefficient_tile_shape_warning'):
-            # print("Warning: no new gradient values found. Tile size could be too small.")
+            print("Warning: no new gradient values found. Tile size could be too small.")
             # self._inefficient_tile_shape_warning = True
             grad_weight = torch.zeros_like(weight)
             if bias is None: grad_bias = None
@@ -355,6 +354,7 @@ class StreamingCNN(object):
 
     def _configure(self):
         if self.replace_non_linearity: self.convert_modules_model(self.stream_module)
+
         self.convert_modules_model(self.stream_module, from_mod=torch.nn.BatchNorm2d, to_mod=torch.nn.Sequential)
 
         # Save current model and cudnn flags, since we need to change them and restore later
@@ -390,9 +390,9 @@ class StreamingCNN(object):
         # Remove all hooks and add hooks for correcting gradients
         # during streaming
         self._remove_hooks()
-        self._add_hooks_for_streaming()
         self._restore_parameters(state_dict)
         self._convert_modules_for_streaming(self.stream_module)
+        self._add_hooks_for_streaming()
         if self.replace_non_linearity: self.convert_modules_model(self.stream_module, back=True)
 
         # Remove temporary data
@@ -404,10 +404,12 @@ class StreamingCNN(object):
             if param.grad is not None: param.grad.data.zero_()
 
         self._set_cudnn_flags(old_deterministic_flag, old_benchmark_flag)
+        print("config done")
         del state_dict
 
 
     def _gather_backward_statistics(self, tile):
+        print("bwd stats")
         # Forward pass with grads enabled
         torch.set_grad_enabled(True)
         output = self.stream_module(tile)
@@ -455,6 +457,7 @@ class StreamingCNN(object):
         mod = module
         if isinstance(module, torch.nn.Conv2d):
             if module in self._module_stats:
+
                 mod = StreamingConv2d(module.in_channels, module.out_channels, module.kernel_size, module.stride, module.padding, module.dilation, module.groups, module.bias is not None)
                 mod = mod.to(module.weight.device)
                 mod = mod.to(module.weight.dtype)
@@ -581,10 +584,9 @@ class StreamingCNN(object):
             self.saliency_map = torch.zeros(image.shape, dtype=self.dtype, device=self.device)
 
         if self.verbose: print('Number of tiles in forward:', n_rows * n_cols)
-        else: iterator = range(n_rows)
 
         with torch.no_grad():
-            for row in iterator:
+            for row in range(n_rows):
                 for col in range(n_cols):
                     # Coordinates of the output w.r.t. the output of full image
                     output_y = row * valid_output_height
@@ -630,6 +632,7 @@ class StreamingCNN(object):
                     tile_output = self.stream_module(tile)
                     torch.cuda.empty_cache()
 
+                
                     trimmed_output = tile_output[:, :,
                                                  lost.top:tile_output.shape[H_DIM] - lost.bottom,
                                                  lost.left:tile_output.shape[W_DIM] - lost.right]
@@ -702,9 +705,8 @@ class StreamingCNN(object):
         self._backward_seen_indices = {}
 
         if self.verbose: print('Number of tiles in backprop:', n_rows * n_cols)
-        else: iterator = range(n_rows)
 
-        for row in iterator:
+        for row in range(n_rows):
             for col in range(n_cols):
                 # Since we determine output (gradient) coordinates based on input
                 # coordinates. We need to divide by output stride.
@@ -764,6 +766,7 @@ class StreamingCNN(object):
                 else: 
                     tile_output = self.stream_module(tile)
 
+
                 del tile # memory management
 
                 trimmed_output = tile_output[:, :,
@@ -782,13 +785,14 @@ class StreamingCNN(object):
                     trimmed_grad = trimmed_grad[:, :,
                                                 0:trimmed_output.shape[H_DIM],
                                                 0:trimmed_output.shape[W_DIM]]
-
+                
                 trimmed_output.backward(trimmed_grad)
 
                 # Memory management
                 del tile_output
                 del trimmed_grad
                 del trimmed_output
+
 
         # Memory management
         self._saved_tensors = {}
@@ -826,8 +830,8 @@ class StreamingCNN(object):
     def enable(self):
         """Enable the streaming hooks"""
         self._remove_hooks()
-        self._add_hooks_for_streaming()
         self._convert_modules_for_streaming(self.stream_module)
+        self._add_hooks_for_streaming()
 
     def _add_hooks_for_statistics(self):
         def forw_lambda(module, inpt, outpt):
@@ -844,10 +848,11 @@ class StreamingCNN(object):
                 return self._backward_saliency_hook(module, grad_in, grad_out)
 
             for mod in self.stream_module.modules():
-                if isinstance(mod, (torch.nn.Conv2d)):
+                if isinstance(mod, torch.nn.Conv2d):
                     if mod.in_channels == 3:
                         back_handle = mod.register_backward_hook(back_lambda)
                         self._hooks.append(back_handle)
+
 
     def _add_hooks(self, forward_hook, backward_hook,
                    forward_modules=(torch.nn.Conv2d, torch.nn.MaxPool2d, torch.nn.AvgPool2d),
@@ -989,7 +994,9 @@ class StreamingCNN(object):
         new_output_box = module.tile_output_box
         updated_total_indices = module.seen_indices
 
-        if module.in_channels == 3:
+
+
+        if module.in_channels == 3 and grad_in is not None :
             valid_grad_in = grad_in[0][:, :,
                                        lost.top*stride[0]:grad_in[0].shape[2] - lost.bottom*stride[0],
                                        lost.left*stride[1]:grad_in[0].shape[3] - lost.right*stride[1]]
