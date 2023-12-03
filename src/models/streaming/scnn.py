@@ -28,26 +28,37 @@ class StreamingNet(torch.nn.Module):
 
     def to(self, device):
         self.top_net.to(device)
-        self.scnn.stream_module.to(device)
+        self.bottom_net.to(device)
         return self
  
     def __init__(self, name: str, top_net, bottom_net, tile_size: int, store_activation_maps: bool = False):
         super().__init__()
         self.name = name 
-        self.store_activation_maps = True 
+        self.store_activation_maps = store_activation_maps 
         self.top_net = top_net
 
         for mod in self.top_net.modules():
             if isinstance(mod, torch.nn.Conv2d):
                 torch.nn.init.kaiming_normal_(mod.weight, nonlinearity='relu')
 
-        self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False, saliency=store_activation_maps)
+        self.bottom_net = bottom_net
+
+        self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False, saliency=False)
 
 
     def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor):
+        self.activation_maps = []
         with torch.no_grad():
             bottom_output = self.scnn.forward(images, result_on_cpu=False)
         bottom_output.requires_grad = True 
+
+        if self.store_activation_maps:
+            _, _, height, width = images.shape
+            activation = bottom_output.clone().cpu().detach()
+            activation = torch.nn.functional.interpolate(activation, size=(height, width), mode='bilinear', align_corners=False)
+            activation = activation.mean(dim=1)
+            activation = torch.nn.functional.normalize(activation, p=2, dim=0)
+            self.activation_maps = activation
 
         top_output = self.top_net(bottom_output, clinical_data)
 
@@ -59,10 +70,10 @@ class StreamingNet(torch.nn.Module):
 
         return top_output, loss
 
-    def get_map(self) -> Tensor:
+    def get_maps(self) -> Tensor:
         if not self.store_activation_maps:
             raise ValueError("Cannot get maps when they're not gathered!")
-        return self.scnn.saliency_map
+        return self.activation_maps
 
 
 # from torch.nn.grad import _grad_input_padding
@@ -404,12 +415,10 @@ class StreamingCNN(object):
             if param.grad is not None: param.grad.data.zero_()
 
         self._set_cudnn_flags(old_deterministic_flag, old_benchmark_flag)
-        print("config done")
         del state_dict
 
 
     def _gather_backward_statistics(self, tile):
-        print("bwd stats")
         # Forward pass with grads enabled
         torch.set_grad_enabled(True)
         output = self.stream_module(tile)
@@ -585,6 +594,7 @@ class StreamingCNN(object):
 
         if self.verbose: print('Number of tiles in forward:', n_rows * n_cols)
 
+
         with torch.no_grad():
             for row in range(n_rows):
                 for col in range(n_cols):
@@ -627,6 +637,7 @@ class StreamingCNN(object):
                     # does this reduce speed significantly?
                     if not self.copy_to_gpu:
                         tile = tile.to(self.device, non_blocking=True)
+
 
                     if self.should_normalize: tile = self._normalize_on_gpu(tile)
                     tile_output = self.stream_module(tile)

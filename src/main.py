@@ -25,6 +25,8 @@ import wandb
 from pipeline_utils import get_dataloaders, Logger, Optimizer
 from torch.nn import SyncBatchNorm
 
+import torchvision.transforms as transforms
+
 from PIL import Image
 
 # fix ssl pytorch bug
@@ -59,12 +61,43 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
             maps_path = f'{data_dir}/maps/{model.module.name}'
             if not os.path.exists(maps_path): os.makedirs(maps_path)
 
-            print("SAVING MAPS")
-            activation_maps = model.module.get_map()
-            #for i, map_tensor in enumerate(activation_maps):
-                #map_tensor = map_tensor.mul(255).byte()
-                #image = Image.fromarray(map_tensor.cpu().numpy().transpose(1,2,0), "RGB")
-                #image.save(f'{maps_path}/{img_names[i]}_map.png')
+            true_pos_path = f'{maps_path}/true_pos'
+            if not os.path.exists(true_pos_path): os.makedirs(true_pos_path)
+
+            false_pos_path = f'{maps_path}/false_pos'
+            if not os.path.exists(false_pos_path): os.makedirs(false_pos_path)
+
+            true_neg_path = f'{maps_path}/true_neg'
+            if not os.path.exists(true_neg_path): os.makedirs(true_neg_path)
+
+            false_neg_path = f'{maps_path}/false_neg'
+            if not os.path.exists(false_neg_path): os.makedirs(false_neg_path)
+
+            activation_maps = model.module.get_maps()
+            for i, map_tensor in enumerate(activation_maps):
+
+                prediction = int(predicted[i].int())
+                true_label = int(labels[i].int())
+
+                if prediction == true_label:
+                    if prediction == 1:
+                        store_path = true_pos_path
+                    else:
+                        store_path = true_neg_path
+                else:
+                    if prediction == 1:
+                        store_path = false_pos_path
+                    else:
+                        store_path = false_neg_path
+
+                height, width = map_tensor.shape
+                red_channel = (map_tensor >= 0.3).float()
+                green_channel = torch.full((height, width), 1.0, dtype=torch.float)
+                activation_map = torch.stack([green_channel, red_channel, red_channel], dim=2).permute(2, 0, 1)
+                original_image = Image.open(f'{data_dir}/hotspots-png/{img_names[i]}.png')
+                original_image = transforms.Compose([transforms.CenterCrop(height), transforms.ToTensor()])(original_image)
+                image = transforms.ToPILImage()(original_image * activation_map)
+                image.save(f'{store_path}/{img_names[i]}_map.png')
 
 
     dist.all_reduce(running_loss, op=dist.ReduceOp.AVG)
