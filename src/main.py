@@ -1,4 +1,5 @@
 import os
+import shutil
 import argparse
 from typing import Optional, Dict, List, Tuple, Any
 from sklearn.metrics import precision_recall_fscore_support, f1_score
@@ -59,7 +60,7 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
         # store all activation maps
         elif data_dir is not None and model.module.store_activation_maps:
             maps_path = f'{data_dir}/maps/{model.module.name}'
-            if not os.path.exists(maps_path): os.makedirs(maps_path)
+            if not os.path.exists(maps_path): os.mkdir(maps_path) 
 
             true_pos_path = f'{maps_path}/true_pos'
             if not os.path.exists(true_pos_path): os.makedirs(true_pos_path)
@@ -91,12 +92,12 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
                         store_path = false_neg_path
 
                 height, width = map_tensor.shape
-                red_channel = (map_tensor >= 0.3).float()
-                green_channel = torch.full((height, width), 1.0, dtype=torch.float)
-                activation_map = torch.stack([green_channel, red_channel, red_channel], dim=2).permute(2, 0, 1)
+                mask = map_tensor < 0.2
                 original_image = Image.open(f'{data_dir}/hotspots-png/{img_names[i]}.png')
-                original_image = transforms.Compose([transforms.CenterCrop(height), transforms.ToTensor()])(original_image)
-                image = transforms.ToPILImage()(original_image * activation_map)
+                image = transforms.Compose([transforms.CenterCrop(height), transforms.ToTensor()])(original_image)
+                image[0][mask] = 0.0
+                image[2][mask] = 0.0
+                image = transforms.ToPILImage()(image)
                 image.save(f'{store_path}/{img_names[i]}_map.png')
 
 
