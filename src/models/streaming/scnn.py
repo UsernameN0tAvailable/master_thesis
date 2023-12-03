@@ -53,10 +53,12 @@ class StreamingNet(torch.nn.Module):
         bottom_output.requires_grad = True 
 
         if self.store_activation_maps:
-            _, _, height, width = images.shape
+            n, c, height, width = images.shape
             activation = bottom_output.clone().cpu().detach()
             activation = torch.nn.functional.interpolate(activation, size=(height, width), mode='bilinear', align_corners=False)
-            activation = activation.mean(dim=1)
+            activation = activation.transpose(1, -1)
+            activation = torch.nn.functional.avg_pool2d(activation, kernel_size=(1, activation.shape[3]//3))
+            activation = activation.transpose(1, -1)
             activation = torch.nn.functional.normalize(activation, p=2, dim=0)
             self.activation_maps = activation
 
