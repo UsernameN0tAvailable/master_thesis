@@ -1,7 +1,8 @@
+from enum import Enum
 from numpy.typing import NDArray
 from torch.utils.data import Dataset, DataLoader
 import torch
-from typing import List, Dict, Optional, Iterator, Any, Tuple
+from typing import List, Dict, Optional, Iterator, Any, Tuple, TypeVar, Callable
 from torch.nn import Parameter
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -152,7 +153,7 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
         else: 
             test_data.push(split)
 
-    Logger.log(f'\nLoaders:\nTrain: {len(train_data)}\nVal: {len(validation_data)}, Test: {len(test_data)}')
+    RunTime.log(f'\nLoaders:\nTrain: {len(train_data)}\nVal: {len(validation_data)}, Test: {len(test_data)}')
 
     weights = train_data.get_weights()
 
@@ -173,7 +174,7 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
 
     crop_train_fn = transforms.RandomCrop(train_input_img_size) 
 
-    Logger.log(f'Train Sampler:\nBatch Size: {train_batch_size}, Image Size: {train_input_img_size}\nVal Sampler:\nBatch Size: {val_batch_size}, Image Size {val_input_img_size}', None)
+    RunTime.log(f'Train Sampler:\nBatch Size: {train_batch_size}, Image Size: {train_input_img_size}\nVal Sampler:\nBatch Size: {val_batch_size}, Image Size {val_input_img_size}', None)
     
 
     return [
@@ -231,20 +232,56 @@ class Random90Rotation:
         angle = random.choice([0, 90, 180, 270])
         return transforms.functional.rotate(img, angle)
 
-class Logger():
-    logging_rank: int = 0
+T = TypeVar('T')
+
+A = TypeVar('A')
+
+class Rank(Enum):
+    Main = 0,
+    Local = 1
+
+class RunTime():
+    main_rank: int = 0
+
     @staticmethod
-    def init(filename: str, rank: int, level =logging.INFO):
-        Logger.logging_rank = rank
+    def rank() -> int:
+        return int(os.environ["LOCAL_RANK"])
+
+    @staticmethod
+    def init(filename: str, main_rank: int, level =logging.INFO):
+        RunTime.main_rank = main_rank
         logging.basicConfig(level=level, filemode='a', filename=filename)
 
     @staticmethod
-    def log(val: str, rank: Optional[int] = -1):
+    def call_executable(closure: Callable[[], T], target_rank: Rank = Rank.Main, local_rank=rank()) -> Optional[T]:
+        if target_rank == Rank.Main and local_rank != RunTime.main_rank:
+            return None
 
-        local_rank = int(os.environ["LOCAL_RANK"])
+        return closure()
 
-        if rank is None:
-            val = f'Device: {local_rank}: {val}'
+    @staticmethod
+    def execute(closure: Callable[..., T], *args, target_rank: Rank = Rank.Main, **kwargs) -> Optional[T]:
+        RunTime.call_executable(lambda: closure(*args, **kwargs), target_rank=target_rank, local_rank=RunTime.rank())
 
-        if rank is None or (rank == -1 and local_rank == Logger.logging_rank) or local_rank == rank:
+    @staticmethod
+    def log(val: str, target_rank: Rank = Rank.Main):
+        local_rank = RunTime.rank()
+        def fn(val: str) -> None:
+            if target_rank == Rank.Local:
+                val = f'Device: {local_rank}: {val}'
             logging.info(val)
+
+        RunTime.call_executable(lambda: fn(val), target_rank=target_rank, local_rank=local_rank)
+
+        
+
+
+
+
+
+
+
+
+
+
+

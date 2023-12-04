@@ -23,7 +23,7 @@ import re
 from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
 import wandb
-from pipeline_utils import get_dataloaders, Logger, Optimizer
+from pipeline_utils import Rank, get_dataloaders, RunTime, Optimizer
 from torch.nn import SyncBatchNorm
 
 import torchvision.transforms as transforms
@@ -33,7 +33,7 @@ from PIL import Image
 # fix ssl pytorch bug
 ssl._create_default_https_context = ssl._create_unverified_context
 
-def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: str, rank: int, device_count: int, average: Optional[str] ="weighted", data_dir: Optional[str] = None):
+def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: str, device_count: int, average: Optional[str] ="weighted", dirs: Optional[Tuple[str, Optional[str], Optional[str]]] = None):
 
     running_loss: Tensor = torch.tensor(0.0, device=device)
     true: List[np.ndarray] = []
@@ -58,9 +58,10 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
             optimizer.scheduler.step()
             optimizer.optimizer.zero_grad() 
         # store all activation maps
-        elif data_dir is not None and model.module.store_activation_maps:
-            maps_path = f'{data_dir}/maps/{model.module.name}'
-            if not os.path.exists(maps_path): os.mkdir(maps_path) 
+        elif model.module.store_feature_maps and dirs is not None and dirs[1] is not None:
+            [data_dir, feature_maps_dir, activation_maps_dir] = dirs
+            maps_path = f'{feature_maps_dir}'
+            if not os.path.exists(maps_path): os.makedirs(maps_path, exist_ok=True) 
 
             true_pos_path = f'{maps_path}/true_pos'
             if not os.path.exists(true_pos_path): os.makedirs(true_pos_path)
@@ -74,8 +75,8 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
             false_neg_path = f'{maps_path}/false_neg'
             if not os.path.exists(false_neg_path): os.makedirs(false_neg_path)
 
-            activation_maps = model.module.get_maps()
-            for i, map_tensor in enumerate(activation_maps):
+            
+            for i, map_tensor in enumerate(model.module.get_feature_maps()):
 
                 prediction = int(predicted[i].int())
                 true_label = int(labels[i].int())
@@ -91,7 +92,7 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
                     else:
                         store_path = false_neg_path
 
-                color, height, width = map_tensor.shape
+                _, height, _ = map_tensor.shape
                 original_image = Image.open(f'{data_dir}/hotspots-png/{img_names[i]}.png')
                 image = transforms.Compose([transforms.CenterCrop(height), transforms.ToTensor()])(original_image)
                 image_with_mask = torch.clamp(image + map_tensor, min=0.0, max=1.0) 
@@ -111,15 +112,16 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
     dist.all_gather(gathered_true_tensors, true_tensor)
     dist.all_gather(gathered_preds_tensors, preds_tensor)
 
-    if rank == Logger.logging_rank:
+    def gather_tensors(gathered_true_tensors, gathered_preds_tensors, average: str):
         gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
         gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
         precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=average, zero_division=0.0)
         avg_f1 = f1_score(gathered_trues, gathered_preds, average="weighted", zero_division=0.0)
         return epoch_loss, precision, recall, f1, avg_f1
 
-    return None, None, None, None, None
+    print("step done")
 
+    return RunTime.execute(gather_tensors, gathered_true_tensors, gathered_preds_tensors, average)
 
 # validation
 def check_batch_size(value):
@@ -160,10 +162,9 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]\n- header_only")
 
 
-def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = False, activation_map: bool = False) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
+def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = False, feature_map: bool = False) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
 
-    model: Optional[DinoFeatureClassifier | StreamingNet] = None
-    Logger.log(f"Model: {param}")
+    RunTime.log(f"Model: {param}")
 
     if param['type'] == 'vit':
         return DinoFeatureClassifier(clinical_data=has_clinical_data)
@@ -190,13 +191,11 @@ def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = F
         else:
             raise ValueError(f'No {bottom_param} bottom net available!!')
 
-        return StreamingNet(param['type'], top_net.to(device), bottom_net.to(device), param['value'], store_activation_maps=activation_map) 
+        return StreamingNet(param['type'], top_net.to(device), bottom_net.to(device), param['value'], store_feature_maps=feature_map) 
     elif param['type'] == 'header_only':
         return MLPHeader()
     else:
         raise ValueError(f'{param} Not Implemented')
-
-    return model
 
 
 def load_clinical_data(path: str) -> Dict[str, np.ndarray]:
@@ -234,18 +233,18 @@ def main():
     parser.add_argument("-t", action="store_true", default=False, help="Test only run")
     parser.add_argument("-i", action="store_true", default=False, help="Train with smaller images")
     parser.add_argument("-p", action="store_true", default=False, help="Pin Memory for more efficient memory management")
-    parser.add_argument("-m", action="store_true", default=False, help="If True cnn will generate saliency maps and vit will generate attention maps -> only applicable on test!")
-    parser.add_argument("--clinical_data", type=str, default=None, help="Additional clinical data file path for the classification net")
+    parser.add_argument("--feature_maps_dir", type=str, default=None, help="If defined, stores feature maps into the dir")
+    parser.add_argument("--clinical_data_dir", type=str, default=None, help="Additional clinical data file path for the classification net")
 
     args = parser.parse_args()
 
-    if args.m and not args.t:
-        raise ValueError("Cannot store maps if not on testing phase!")
+    if args.feature_maps_dir is not None and not args.t:
+        raise ValueError("Cannot store feature maps if not on testing phase!")
 
     clinical_data: Optional[Dict[str, np.ndarray]] = None;
 
-    if args.clinical_data is not None:
-        clinical_data = load_clinical_data(args.clinical_data)
+    if args.clinical_data_dir is not None:
+        clinical_data = load_clinical_data(args.clinical_data_dir)
 
     if args.t and args.i:
         raise ValueError("Cannot use reduced image size for testing!!")
@@ -258,6 +257,14 @@ def main():
     dist.init_process_group(backend='nccl', init_method='env://')
 
     rank: int = int(os.environ["LOCAL_RANK"])
+
+    def create_or_replace_folder(path: str):
+        if os.path.exists(path):
+            shutil.rmtree(path)
+        os.makedirs(path, exist_ok=True)
+
+    if args.feature_maps_dir is not None:
+        RunTime.execute(create_or_replace_folder, args.feature_maps_dir)
 
     device_count: int = torch.cuda.device_count()
     device: str = str(torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu'))
@@ -304,13 +311,13 @@ def main():
     checkpoint_filepath: str = f'{args.models_dir}/{run_name}.pth'
 
     torch.cuda.set_device(main_gpu)
-    Logger.init(run_name, main_gpu)
-    Logger.log(f'Tot Batch Size: {tot_batch_size}')
-    Logger.log(f'Aggregate Results at GPU: {main_gpu}')
-    Logger.log(f'Local Batch Size: {local_batch_size}', None)
+    RunTime.init(run_name, main_gpu)
+    RunTime.log(f'Tot Batch Size: {tot_batch_size}')
+    RunTime.log(f'Aggregate Results at GPU: {main_gpu}')
+    RunTime.log(f'Local Batch Size: {local_batch_size}', Rank.Local)
 
 
-    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device, clinical_data is not None, activation_map=args.m)
+    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device, clinical_data is not None, feature_map=args.feature_maps_dir is not None)
 	
     best_f1: float = float(0.0)
     best_loss: float = float(1.0)
@@ -320,7 +327,7 @@ def main():
     is_resume = os.path.isfile(checkpoint_filepath)
 
     if is_resume:
-        Logger.log('Loading Stored')
+        RunTime.log('Loading Stored')
         checkpoint_dict = torch.load(checkpoint_filepath)
         model_state_dict = {k.replace('module.', ''): v for k, v in checkpoint_dict['model'].items()}
         model_obj.load_state_dict(model_state_dict)
@@ -331,46 +338,47 @@ def main():
 
     model_obj = model_obj.to(device)
 
-    if rank == main_gpu:
-        if not args.t:
-            wandb.init(
-                    id=run_name,
-                    project=args.project,
-                    group=f'{args.type}',
-                    name = f'{args.shift}',
-                    config= {
-                        "learning_rate": args.lr,
-                        "architecture": f'{args.type}',
-                        "dataset": "Tumor Budding Hotspots",
-                        },
-                    resume=is_resume
-                    )
+    if not args.t:
+        RunTime.execute(
+                wandb.init,
+                id=run_name, 
+                project=args.project, 
+                group=f'{args.type}', 
+                name = f'{args.shift}', 
+                config= {
+                    "learning_rate": args.lr, 
+                    "architecture": f'{args.type}', 
+                    "dataset": "Tumor Budding Hotspots"
+                },
+                resume=is_resume
+             )
+ 
     assert model_obj is not None
 
-    Logger.log(f'running distributed on {torch.cuda.device_count()} GPUs')
+    RunTime.log(f'running distributed on {torch.cuda.device_count()} GPUs')
 
     model_dist: DistributedDataParallel = DistributedDataParallel(model_obj, device_ids=[device], output_device=device)
     model: SyncBatchNorm = SyncBatchNorm.convert_sync_batchnorm(model_dist)
 
     optimizer: Optimizer = Optimizer.new(model.parameters(), float(args.lr), int(args.epochs), checkpoint_dict)
 
-    Logger.log("Loading Data ...")
+    RunTime.log("Loading Data ...")
 
     train_dataloader, val_dataloader, test_dataloader, class_weights = get_dataloaders(args.shift, args.data_dir, local_batch_size, args.oversample, model_type, args.i, args.p, clinical_data, header_only=model_type['type'] == 'header_only')
 
     weights = torch.from_numpy(class_weights).float().to(device)
 
     if not args.t:
-        Logger.log(f'Class weights {class_weights}')
+        RunTime.log(f'Class weights {class_weights}')
 
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.2)
 
     if args.t:
-        Logger.log("Start Test ...")
+        RunTime.log("Start Test ...")
     elif args.i:
-        Logger.log("Start Training with smaller images ...")
+        RunTime.log("Start Training with smaller images ...")
     else:
-        Logger.log("Fine Tuning for whole resolution")
+        RunTime.log("Fine Tuning for whole resolution")
 
     no_improvement = 0
 
@@ -381,18 +389,18 @@ def main():
     while True and not args.t:
         model.train()
         train_dataloader.sampler.set_epoch(epoch)
-        train_loss, train_precision, train_recall, train_f1, _ = step(model, optimizer, criterion, train_dataloader, device, rank, device_count)
+        train_loss, train_precision, train_recall, train_f1, _ = step(model, optimizer, criterion, train_dataloader, device, device_count)
         model.eval()
         val_dataloader.sampler.set_epoch(epoch)
-        val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, criterion, val_dataloader, device, rank, device_count, average=None)
+        val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, criterion, val_dataloader, device, device_count, average=None)
 
-        if rank == main_gpu:
+        def train_step(model, train_loss, train_precision, train_recall, train_f1, val_loss, val_precision, val_recall, val_f1, best_model_dict, best_loss, best_f1, no_improvement, flag_tensor) -> None:
 
             if val_loss is None or math.isnan(val_loss):
                 val_loss = 1.0
 
             wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
-            Logger.log(f'Epoch: {epoch}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
+            RunTime.log(f'Epoch: {epoch}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
 
             assert average_f1 is not None and best_f1 is not None
 
@@ -406,7 +414,7 @@ def main():
             else:
                 no_improvement += 1
                 if no_improvement >= 80:
-                    Logger.log("No Loss And F1 improvement for 40 Epoch, exiting training", None)
+                    RunTime.log("No Loss And F1 improvement for 40 Epoch, exiting training")
                     flag_tensor += 1
 
             model_path = f'{args.models_dir}/{run_name}.pth'
@@ -422,6 +430,8 @@ def main():
             )
             wandb.save(model_path)
 
+        RunTime.execute(train_step, model, train_loss, train_precision, train_recall, train_f1, val_loss, val_precision, val_recall, val_f1, best_model_dict, best_loss, best_f1, no_improvement, flag_tensor)
+
         dist.all_reduce(flag_tensor)
 
         if flag_tensor == 1:
@@ -433,10 +443,9 @@ def main():
         model = model.to(device)
         model.eval() 
         test_dataloader.sampler.set_epoch(epoch)
-        test_loss, test_precision, test_recall, test_f1, _ = step(model, None, criterion, test_dataloader, device, rank, device_count, average=None, data_dir=args.data_dir)
-        if rank == main_gpu:
-            wandb.finish()
-            Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
+        test_loss, test_precision, test_recall, test_f1, _ = step(model, None, criterion, test_dataloader, device, device_count, average=None, dirs=[args.data_dir, args.feature_maps_dir, None])
+        RunTime.execute(wandb.finish)
+        RunTime.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}')
 
 
 if __name__ == "__main__":

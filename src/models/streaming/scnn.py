@@ -31,10 +31,10 @@ class StreamingNet(torch.nn.Module):
         self.bottom_net.to(device)
         return self
  
-    def __init__(self, name: str, top_net, bottom_net, tile_size: int, store_activation_maps: bool = False):
+    def __init__(self, name: str, top_net, bottom_net, tile_size: int, store_feature_maps: bool = False):
         super().__init__()
         self.name = name 
-        self.store_activation_maps = store_activation_maps 
+        self.store_feature_maps = store_feature_maps 
         self.top_net = top_net
 
         for mod in self.top_net.modules():
@@ -47,35 +47,36 @@ class StreamingNet(torch.nn.Module):
 
 
     def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor):
-        self.activation_maps = []
+        self.feature_maps = []
         with torch.no_grad():
             bottom_output = self.scnn.forward(images, result_on_cpu=False)
         bottom_output.requires_grad = True 
 
-        if self.store_activation_maps:
-            n, c, height, width = images.shape
-            activation = bottom_output.clone().cpu().detach()
-            activation = torch.nn.functional.interpolate(activation, size=(height, width), mode='bilinear', align_corners=False)
-            activation = activation.transpose(1, -1)
-            activation = torch.nn.functional.avg_pool2d(activation, kernel_size=(1, activation.shape[3]//3))
-            activation = activation.transpose(1, -1)
-            activation = torch.nn.functional.normalize(activation, p=2, dim=0)
-            self.activation_maps = activation
+        if self.store_feature_maps:
+            _, _, height, width = images.shape
+            feature_map = bottom_output.clone().cpu().detach()
+            feature_map = torch.nn.functional.interpolate(feature_map, size=(height, width), mode='bilinear', align_corners=False)
+            feature_map = feature_map.transpose(1, -1)
+            feature_map = torch.nn.functional.avg_pool2d(feature_map, kernel_size=(1, feature_map.shape[3]//3))
+            feature_map = feature_map.transpose(1, -1)
+            feature_map = torch.nn.functional.normalize(feature_map, p=2, dim=0)
+            self.feature_maps = feature_map
 
         top_output = self.top_net(bottom_output, clinical_data)
 
         loss = criterion(top_output, labels.view(-1))
 
-        if optimizer is not None or self.store_activation_maps:
+        if optimizer is not None:
+            print("HERE")
             loss.backward()
             self.scnn.backward(images, bottom_output.grad)
 
         return top_output, loss
 
-    def get_maps(self) -> Tensor:
-        if not self.store_activation_maps:
+    def get_feature_maps(self) -> Tensor:
+        if not self.store_feature_maps:
             raise ValueError("Cannot get maps when they're not gathered!")
-        return self.activation_maps
+        return self.feature_maps
 
 
 # from torch.nn.grad import _grad_input_padding
@@ -143,6 +144,7 @@ class StreamingConv2dF(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
+        print("back module")
         inpt, weight, bias = ctx.saved_variables
         grad = grad_weight = grad_bias = None
 
@@ -671,6 +673,7 @@ class StreamingCNN(object):
         return output.to(self.device)
 
     def backward(self, image, grad):
+        print("backward SCNN")
         """Perform backward pass with streaming.
 
         Parameters:
