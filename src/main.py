@@ -162,19 +162,19 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]\n- header_only")
 
 
-def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = False, feature_map: bool = False) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
+def create_model(param: Dict[str, Any], device: str, feature_map: bool = False) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
 
     RunTime.log(f"Model: {param}")
 
     if param['type'] == 'vit':
-        return DinoFeatureClassifier(clinical_data=has_clinical_data)
+        return DinoFeatureClassifier()
     elif param['type'] == 'stream':
 
         top_param = param['top']
         bottom_param = param['bottom']
 
         if top_param == 'cnn':
-            top_net = TopCNN(has_clinical_data)
+            top_net = TopCNN()
         else:
             raise ValueError(f'No {top_param} top net available!!')
 
@@ -317,7 +317,7 @@ def main():
     RunTime.log(f'Local Batch Size: {local_batch_size}', Rank.Local)
 
 
-    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device, clinical_data is not None, feature_map=args.feature_maps_dir is not None)
+    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device, feature_map=args.feature_maps_dir is not None)
 	
     best_f1: float = float(0.0)
     best_loss: float = float(1.0)

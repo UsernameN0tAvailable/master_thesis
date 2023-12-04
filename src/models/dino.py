@@ -14,12 +14,6 @@ def make_nonlinear_clusterer(in_channels: int, out_channels: int):
         torch.nn.Linear(in_channels, out_channels)
     )
 
-def make_linear_clusterer(in_channels: int, out_channels: int, bias: Optional[bool] = False):
-    return torch.nn.Sequential(
-        torch.nn.Conv2d(in_channels, out_channels, (1, 1), bias=bias)
-    )
-
-
 class DinoFeature(nn.Module):
     def __init__(
             self,
@@ -87,7 +81,6 @@ class DinoFeatureClassifier(DinoFeature):
             n_cls: int = 2,
             dropout: float = 0.1,
             freeze: str = 'backbone.head',
-            clinical_data: bool = False
     ):
         super(DinoFeatureClassifier, self).__init__(
             dino_arch=dino_arch, freeze=freeze
@@ -96,9 +89,7 @@ class DinoFeatureClassifier(DinoFeature):
         self.n_cls = n_cls
         self.dropout = torch.nn.Dropout2d(p=dropout)
 
-        tot_in_channels =  self.n_feats + 4 if clinical_data else self.n_feats
-
-        print("tot channels: ", tot_in_channels)
+        tot_in_channels =  self.n_feats + 4
 
         self.cluster = make_nonlinear_clusterer(
             in_channels=tot_in_channels,

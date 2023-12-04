@@ -13,7 +13,7 @@ from numpy import ndarray
 # # Model definition
 
 class TopCNN(torch.nn.Module):
-    def __init__(self, has_clinical_data: bool):
+    def __init__(self):
         super(TopCNN, self).__init__()
         self.layers = torch.nn.Sequential(
             torch.nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1), torch.nn.ReLU(inplace=True),
@@ -24,10 +24,10 @@ class TopCNN(torch.nn.Module):
             torch.nn.AdaptiveMaxPool2d(1)
         )
 
-        self.classifier = torch.nn.Linear(260 if has_clinical_data else 256, 2)
+        self.classifier = torch.nn.Linear(260, 2)
 
-    def forward(self, x: Tensor, clinical_data: Tensor):
-        x: Tensor = self.layers(x)
+    def forward(self, image: Tensor, clinical_data: Tensor):
+        x: Tensor = self.layers(image)
         x: Tensor = x.view(x.shape[0], -1)
         x = torch.cat((x, clinical_data), dim=1)
         x = self.classifier(x)
