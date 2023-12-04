@@ -394,7 +394,7 @@ def main():
         val_dataloader.sampler.set_epoch(epoch)
         val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, criterion, val_dataloader, device, device_count, average=None)
 
-        def train_step(model, train_loss, train_precision, train_recall, train_f1, val_loss, val_precision, val_recall, val_f1, best_model_dict, best_loss, best_f1, no_improvement, flag_tensor) -> None:
+        def epoch_step(model, train_loss, train_precision, train_recall, train_f1, val_loss, val_precision, val_recall, val_f1, best_model_dict, best_loss, best_f1, no_improvement, flag_tensor) -> None:
 
             if val_loss is None or math.isnan(val_loss):
                 val_loss = 1.0
@@ -430,7 +430,7 @@ def main():
             )
             wandb.save(model_path)
 
-        RunTime.execute(train_step, model, train_loss, train_precision, train_recall, train_f1, val_loss, val_precision, val_recall, val_f1, best_model_dict, best_loss, best_f1, no_improvement, flag_tensor)
+        RunTime.execute(epoch_step, model, train_loss, train_precision, train_recall, train_f1, val_loss, val_precision, val_recall, val_f1, best_model_dict, best_loss, best_f1, no_improvement, flag_tensor)
 
         dist.all_reduce(flag_tensor)
 
