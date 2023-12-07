@@ -33,11 +33,17 @@ from PIL import Image
 # fix ssl pytorch bug
 ssl._create_default_https_context = ssl._create_unverified_context
 
-def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: str, device_count: int, average: Optional[str] ="weighted", dirs: Optional[Tuple[str, Optional[str], Optional[str]]] = None):
+def step(model, optimizer: Optional[Optimizer], criterion, dataloader, dirs: Optional[Tuple[str, Optional[str], Optional[str]]] = None):
+
+    device = RunTime.device()
+    device_count = RunTime.device_count
 
     running_loss: Tensor = torch.tensor(0.0, device=device)
     true: List[np.ndarray] = []
     preds: List[np.ndarray] = []
+
+    data_dir, feature_maps_dir, activation_maps_dir = dirs or None, None, None
+    store_feature_maps = feature_maps_dir is not None
 
     for images, labels, clinical_data, img_names  in dataloader:
         labels: Tensor = labels.to(device)
@@ -46,7 +52,7 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
 
         if optimizer is not None: optimizer.optimizer.zero_grad()
 
-        output, loss = model.module.step(images, labels, criterion, optimizer, clinical_data)
+        output, loss = model.module.step(images, labels, criterion, optimizer, clinical_data, store_feature_maps=store_feature_maps)
         running_loss += loss.item() * images.size(0)
         predicted = torch.max(output.data, 1)[1]
         
@@ -58,8 +64,7 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
             optimizer.scheduler.step()
             optimizer.optimizer.zero_grad() 
         # store all activation maps
-        elif model.module.store_feature_maps and dirs is not None and dirs[1] is not None:
-            [data_dir, feature_maps_dir, activation_maps_dir] = dirs
+        elif store_feature_maps:
             maps_path = f'{feature_maps_dir}'
             if not os.path.exists(maps_path): os.makedirs(maps_path, exist_ok=True) 
 
@@ -100,7 +105,7 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
                 image.save(f'{store_path}/{img_names[i]}_map.png')
 
 
-    dist.all_reduce(running_loss, op=dist.ReduceOp.AVG)
+    dist.all_reduce(running_loss, op=dist.ReduceOp.AVG) # type: ignore
     epoch_loss: float = running_loss.item() / len(dataloader.dataset)
 
     true_tensor: Tensor = torch.tensor(true, device=device)
@@ -112,16 +117,28 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
     dist.all_gather(gathered_true_tensors, true_tensor)
     dist.all_gather(gathered_preds_tensors, preds_tensor)
 
-    def gather_tensors(gathered_true_tensors, gathered_preds_tensors, average: str):
-        gathered_trues = torch.cat(gathered_true_tensors, dim=0).cpu().numpy()
-        gathered_preds = torch.cat(gathered_preds_tensors, dim=0).cpu().numpy()
-        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=average, zero_division=0.0)
-        avg_f1 = f1_score(gathered_trues, gathered_preds, average="weighted", zero_division=0.0)
-        return epoch_loss, precision, recall, f1, avg_f1
+    return DistributedResult(gathered_true_tensors, gathered_preds_tensors, epoch_loss) 
 
-    print("step done")
 
-    return RunTime.execute(gather_tensors, gathered_true_tensors, gathered_preds_tensors, average)
+class DistributedResult:
+
+    def  __init__(self, truths: List[Tensor], predictions: List[Tensor], loss: float) -> None:
+        self.truths: List[Tensor] = truths
+        self.predictions: List[Tensor] = predictions
+        self.loss: float = loss
+
+    def compute(self, average: Optional[str] = "weighted"):
+        gathered_trues = torch.cat(self.truths, dim=0).cpu().numpy()
+        gathered_preds = torch.cat(self.predictions, dim=0).cpu().numpy()
+        precision, recall, f1, _ = precision_recall_fscore_support(gathered_trues, gathered_preds, average=average, zero_division=0.0) # type: ignore
+
+        return {
+                'precision': precision,
+                'recall': recall,
+                'f1': f1,
+                'avg_f1': f1_score(gathered_trues, gathered_preds, average="weighted", zero_division=0.0), # type: ignore
+                'loss': self.loss
+        }
 
 # validation
 def check_batch_size(value):
@@ -162,7 +179,7 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]\n- header_only")
 
 
-def create_model(param: Dict[str, Any], device: str, feature_map: bool = False) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
+def create_model(param: Dict[str, Any], device: str) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
 
     RunTime.log(f"Model: {param}")
 
@@ -191,7 +208,7 @@ def create_model(param: Dict[str, Any], device: str, feature_map: bool = False) 
         else:
             raise ValueError(f'No {bottom_param} bottom net available!!')
 
-        return StreamingNet(param['type'], top_net.to(device), bottom_net.to(device), param['value'], store_feature_maps=feature_map) 
+        return StreamingNet(top_net.to(device), bottom_net.to(device), param['value']) 
     elif param['type'] == 'header_only':
         return MLPHeader()
     else:
@@ -222,7 +239,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=str, required=True)
     parser.add_argument("--shift", type=int, default=0, choices=[0, 1, 2, 3, 4])
-    parser.add_argument("--epochs", type=int, default=250)
+    parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--models_dir", type=str, required=True)
     parser.add_argument("--type", type=str, default="vit[2048]")
@@ -311,13 +328,13 @@ def main():
     checkpoint_filepath: str = f'{args.models_dir}/{run_name}.pth'
 
     torch.cuda.set_device(main_gpu)
-    RunTime.init(run_name, main_gpu)
+    RunTime.init(run_name, main_gpu, device_count, args.device)
     RunTime.log(f'Tot Batch Size: {tot_batch_size}')
     RunTime.log(f'Aggregate Results at GPU: {main_gpu}')
     RunTime.log(f'Local Batch Size: {local_batch_size}', Rank.Local)
 
 
-    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device, feature_map=args.feature_maps_dir is not None)
+    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device)
 	
     best_f1: float = float(0.0)
     best_loss: float = float(1.0)
@@ -389,32 +406,46 @@ def main():
     while True and not args.t:
         model.train()
         train_dataloader.sampler.set_epoch(epoch)
-        train_loss, train_precision, train_recall, train_f1, _ = step(model, optimizer, criterion, train_dataloader, device, device_count)
+        train_result = step(model, optimizer, criterion, train_dataloader)
         model.eval()
         val_dataloader.sampler.set_epoch(epoch)
-        val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, criterion, val_dataloader, device, device_count, average=None)
+        validation_result = step(model, None, criterion, val_dataloader)
 
-        def epoch_step(model, train_loss, train_precision, train_recall, train_f1, val_loss, val_precision, val_recall, val_f1, best_model_dict, best_loss, best_f1, no_improvement, flag_tensor) -> None:
+        def epoch_step(model, train_result: DistributedResult, val_result: DistributedResult, best_model_dict, best_loss: float, best_f1: float, no_improvement: int, flag_tensor: Tensor) -> None:
 
-            if val_loss is None or math.isnan(val_loss):
-                val_loss = 1.0
+            t_result = train_result.compute('weighted')
+            v_result = val_result.compute(None)
 
-            wandb.log({"train_loss": train_loss, "train_prec": train_precision, "train_recall": train_recall, "train_f1": train_f1, "val_loss": val_loss, "val_prec_0": val_precision[0], "val_prec_1": val_precision[1], "val_recall_0": val_recall[0], "val_recall_1": val_recall[1], "val_f1_0": val_f1[0], "val_f1_1": val_f1[1]})
+            if v_result['loss'] is None or math.isnan(v_result['loss']):
+                v_result['loss'] = 1.0
+
+            train_loss = t_result['loss']
+            train_precision = t_result['precision']
+            train_recall = t_result['recall']
+            train_f1 = t_result['f1']
+
+            val_loss = v_result['loss']
+            val_precision = v_result['precision']
+            val_recall = v_result['recall']
+            val_f1 = v_result['f1']
+
+
+            wandb.log({"train_loss": t_result['loss'], "train_prec": t_result['precision'], "train_recall": t_result['recall'], "train_f1": t_result['f1'], "val_loss": v_result['loss'], "val_prec_0": v_result['precision'][0], "val_prec_1": v_result['precision'][1], "val_recall_0": v_result['recall'][0], "val_recall_1": v_result['recall'][1], "val_f1_0": v_result['f1'][0], "val_f1_1": v_result['f1'][1]})
             RunTime.log(f'Epoch: {epoch}\nTrain:\nLoss: {train_loss}, Precision: {train_precision}, Recall: {train_recall}, F1: {train_f1}\nValidation:\nLoss: {val_loss}, Precision: {val_precision}, Recall: {val_recall}, F1: {val_f1}')
 
-            assert average_f1 is not None and best_f1 is not None
+            assert v_result['avg_f1'] is not None and best_f1 is not None
 
-            if best_model_dict is None or best_loss > val_loss or average_f1 > best_f1: 
+            if best_model_dict is None or best_loss > val_loss or v_result['avg_f1'] > best_f1: 
 
                 best_loss = val_loss if best_loss > val_loss else best_loss
-                best_f1 = average_f1 if average_f1 > best_f1 else best_f1
+                best_f1 = v_result['avg_f1'] if v_result['avg_f1'] > best_f1 else best_f1
                 best_model_dict = model.state_dict()
 
                 no_improvement = 0
             else:
                 no_improvement += 1
-                if no_improvement >= 80:
-                    RunTime.log("No Loss And F1 improvement for 40 Epoch, exiting training")
+                if no_improvement >= args.epochs:
+                    RunTime.log(f'No Loss And F1 improvement for {args.epochs} Epochs, exiting training')
                     flag_tensor += 1
 
             model_path = f'{args.models_dir}/{run_name}.pth'
@@ -430,7 +461,7 @@ def main():
             )
             wandb.save(model_path)
 
-        RunTime.execute(epoch_step, model, train_loss, train_precision, train_recall, train_f1, val_loss, val_precision, val_recall, val_f1, best_model_dict, best_loss, best_f1, no_improvement, flag_tensor)
+        RunTime.execute(epoch_step, model, train_result, validation_result, best_model_dict, best_loss, best_f1, no_improvement, flag_tensor)
 
         dist.all_reduce(flag_tensor)
 
@@ -440,12 +471,26 @@ def main():
 
     # test values
     if args.t or not args.i:
-        model = model.to(device)
+
+        def test_eval(result: DistributedResult) -> None:
+            wandb.finish()
+            test_results = result.compute(average=None)
+            precision = test_results['precision']
+            loss = test_results['loss']
+            recall = test_results['recall']
+            f1 = test_results['f1']
+            RunTime.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {loss}, Precision: {precision}, Recall: {recall}, F1: {f1}')
+
+
+        print(RunTime.device())
+
+
+        model = model.to(RunTime.device())
         model.eval() 
         test_dataloader.sampler.set_epoch(epoch)
-        test_loss, test_precision, test_recall, test_f1, _ = step(model, None, criterion, test_dataloader, device, device_count, average=None, dirs=[args.data_dir, args.feature_maps_dir, None])
-        RunTime.execute(wandb.finish)
-        RunTime.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}')
+        test_result = step(model, None, criterion, test_dataloader, dirs=(args.data_dir, args.feature_maps_dir, None))
+
+        RunTime.execute(test_eval, test_result)
 
 
 if __name__ == "__main__":

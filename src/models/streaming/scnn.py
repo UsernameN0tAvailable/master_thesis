@@ -31,10 +31,9 @@ class StreamingNet(torch.nn.Module):
         self.bottom_net.to(device)
         return self
  
-    def __init__(self, name: str, top_net, bottom_net, tile_size: int, store_feature_maps: bool = False):
+    def __init__(self, top_net, bottom_net, tile_size: int):
         super().__init__()
-        self.name = name 
-        self.store_feature_maps = store_feature_maps 
+        self._feature_maps: Optional[Tensor]  = None 
         self.top_net = top_net
 
         for mod in self.top_net.modules():
@@ -46,13 +45,12 @@ class StreamingNet(torch.nn.Module):
         self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False, saliency=False)
 
 
-    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor):
-        self.feature_maps = []
+    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor, store_feature_maps: bool = False):
         with torch.no_grad():
             bottom_output = self.scnn.forward(images, result_on_cpu=False)
         bottom_output.requires_grad = True 
 
-        if self.store_feature_maps:
+        if store_feature_maps:
             _, _, height, width = images.shape
             feature_map = bottom_output.clone().cpu().detach()
             feature_map = torch.nn.functional.interpolate(feature_map, size=(height, width), mode='bilinear', align_corners=False)
@@ -60,7 +58,7 @@ class StreamingNet(torch.nn.Module):
             feature_map = torch.nn.functional.avg_pool2d(feature_map, kernel_size=(1, feature_map.shape[3]//3))
             feature_map = feature_map.transpose(1, -1)
             feature_map = torch.nn.functional.normalize(feature_map, p=2, dim=0)
-            self.feature_maps = feature_map
+            self._feature_maps = feature_map
 
         top_output = self.top_net(bottom_output, clinical_data)
 
@@ -74,9 +72,9 @@ class StreamingNet(torch.nn.Module):
         return top_output, loss
 
     def get_feature_maps(self) -> Tensor:
-        if not self.store_feature_maps:
+        if self._feature_maps is None:
             raise ValueError("Cannot get maps when they're not gathered!")
-        return self.feature_maps
+        return self._feature_maps
 
 
 # from torch.nn.grad import _grad_input_padding

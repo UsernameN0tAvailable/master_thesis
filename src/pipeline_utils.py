@@ -17,7 +17,7 @@ import numpy as np
 import random
 
 from torch.utils.data.distributed import DistributedSampler
-from torch import Tensor
+from torch import Tensor, device
 
 FULL_IMAGE_SIZE=3504
 
@@ -242,14 +242,17 @@ class Rank(Enum):
 
 class RunTime():
     main_rank: int = 0
-
+    device_count: int = 0
+    device_type: str
     @staticmethod
     def rank() -> int:
         return int(os.environ["LOCAL_RANK"])
 
     @staticmethod
-    def init(filename: str, main_rank: int, level =logging.INFO):
+    def init(filename: str, main_rank: int, device_count: int, device_type: str, level =logging.INFO):
         RunTime.main_rank = main_rank
+        RunTime.device_count = device_count
+        RunTime.device_type = device_type
         logging.basicConfig(level=level, filemode='a', filename=filename)
 
     @staticmethod
@@ -272,6 +275,11 @@ class RunTime():
             logging.info(val)
 
         RunTime.call_executable(lambda: fn(val), target_rank=target_rank, local_rank=local_rank)
+
+    @staticmethod
+    def device() -> device:
+        return torch.device(f'cuda:{RunTime.rank()}') if RunTime.device_type == 'cuda' else torch.device('cpu')
+
 
         
 
