@@ -42,7 +42,13 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, dirs: Opt
     true: List[np.ndarray] = []
     preds: List[np.ndarray] = []
 
-    data_dir, feature_maps_dir, activation_maps_dir = dirs or None, None, None
+    data_dir = None
+    feature_maps_dir = None
+    activation_maps_dir = None
+
+    if dirs is not None:
+        data_dir, feature_maps_dir, activation_maps_dir = dirs
+
     store_feature_maps = feature_maps_dir is not None
 
     for images, labels, clinical_data, img_names  in dataloader:
