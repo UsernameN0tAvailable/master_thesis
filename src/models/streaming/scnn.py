@@ -34,6 +34,7 @@ class StreamingNet(torch.nn.Module):
     def __init__(self, top_net, bottom_net, tile_size: int):
         super().__init__()
         self._feature_maps: Optional[Tensor]  = None 
+        self._saliency_maps: Optional[Tensor]  = None 
         self.top_net = top_net
 
         for mod in self.top_net.modules():
@@ -45,7 +46,7 @@ class StreamingNet(torch.nn.Module):
         self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False, saliency=False)
 
 
-    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor, store_feature_maps: bool = False):
+    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor, store_feature_maps: bool = False, store_activation_maps: bool = False):
         with torch.no_grad():
             bottom_output = self.scnn.forward(images, result_on_cpu=False)
         bottom_output.requires_grad = True 
@@ -64,7 +65,7 @@ class StreamingNet(torch.nn.Module):
 
         loss = criterion(top_output, labels.view(-1))
 
-        if optimizer is not None:
+        if optimizer is not None or store_activation_maps:
             print("HERE")
             loss.backward()
             self.scnn.backward(images, bottom_output.grad)

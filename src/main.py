@@ -49,7 +49,8 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, dirs: Opt
     if dirs is not None:
         data_dir, feature_maps_dir, activation_maps_dir = dirs
 
-    store_feature_maps = feature_maps_dir is not None
+    store_feature_maps: bool = feature_maps_dir is not None
+    store_activation_maps: bool = activation_maps_dir is not None
 
     for images, labels, clinical_data, img_names  in dataloader:
         labels: Tensor = labels.to(device)
@@ -58,7 +59,7 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, dirs: Opt
 
         if optimizer is not None: optimizer.optimizer.zero_grad()
 
-        output, loss = model.module.step(images, labels, criterion, optimizer, clinical_data, store_feature_maps=store_feature_maps)
+        output, loss = model.module.step(images, labels, criterion, optimizer, clinical_data, store_feature_maps=store_feature_maps, store_activation_maps=store_activation_maps)
         running_loss += loss.item() * images.size(0)
         predicted = torch.max(output.data, 1)[1]
         
@@ -109,6 +110,9 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, dirs: Opt
                 image_with_mask = torch.clamp(image + map_tensor, min=0.0, max=1.0) 
                 image = transforms.ToPILImage()(image_with_mask)
                 image.save(f'{store_path}/{img_names[i]}_map.png')
+
+        if store_activation_maps:
+            print("GATHER SALIENCY MPAS")
 
 
     dist.all_reduce(running_loss, op=dist.ReduceOp.AVG) # type: ignore
@@ -256,13 +260,14 @@ def main():
     parser.add_argument("-t", action="store_true", default=False, help="Test only run")
     parser.add_argument("-i", action="store_true", default=False, help="Train with smaller images")
     parser.add_argument("-p", action="store_true", default=False, help="Pin Memory for more efficient memory management")
-    parser.add_argument("--feature_maps_dir", type=str, default=None, help="If defined, stores feature maps into the dir")
     parser.add_argument("--clinical_data_dir", type=str, default=None, help="Additional clinical data file path for the classification net")
+    parser.add_argument("--feature_maps_dir", type=str, default=None, help="If defined, stores feature maps into the dir")
+    parser.add_argument("--activation_maps_dir", type=str, default=None, help="If defined, stores activation maps into the dir")
 
     args = parser.parse_args()
 
-    if args.feature_maps_dir is not None and not args.t:
-        raise ValueError("Cannot store feature maps if not on testing phase!")
+    if (args.feature_maps_dir is not None or args.activation_maps_dir is not None ) and not args.t:
+        raise ValueError("Cannot store maps if not on testing phase!")
 
     clinical_data: Optional[Dict[str, np.ndarray]] = None;
 
@@ -288,6 +293,9 @@ def main():
 
     if args.feature_maps_dir is not None:
         RunTime.execute(create_or_replace_folder, args.feature_maps_dir)
+
+    if args.activation_maps_dir is not None:
+        RunTime.execute(create_or_replace_folder, args.activation_maps_dir)
 
     device_count: int = torch.cuda.device_count()
     device: str = str(torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu'))
@@ -490,7 +498,7 @@ def main():
         model = model.to(RunTime.device())
         model.eval() 
         test_dataloader.sampler.set_epoch(epoch)
-        test_result = step(model, None, criterion, test_dataloader, dirs=(args.data_dir, args.feature_maps_dir, None))
+        test_result = step(model, None, criterion, test_dataloader, dirs=(args.data_dir, args.feature_maps_dir, args.activation_maps_dir))
 
         RunTime.execute(test_eval, test_result)
 
