@@ -481,10 +481,6 @@ def main():
             f1 = test_results['f1']
             RunTime.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {loss}, Precision: {precision}, Recall: {recall}, F1: {f1}')
 
-
-        print(RunTime.device())
-
-
         model = model.to(RunTime.device())
         model.eval() 
         test_dataloader.sampler.set_epoch(epoch)
