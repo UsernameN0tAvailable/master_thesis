@@ -66,7 +66,6 @@ class StreamingNet(torch.nn.Module):
         loss = criterion(top_output, labels.view(-1))
 
         if optimizer is not None or store_activation_maps:
-            print("HERE")
             loss.backward()
             self.scnn.backward(images, bottom_output.grad)
 
@@ -143,7 +142,6 @@ class StreamingConv2dF(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        print("back module")
         inpt, weight, bias = ctx.saved_variables
         grad = grad_weight = grad_bias = None
 
@@ -198,7 +196,6 @@ class StreamingConv2dF(torch.autograd.Function):
         new_output_box, updated_total_indices = StreamingCNN._new_value_indices(valid_grad.shape,
                                                                                 data_loc,
                                                                                 old_value_indices)
-
         # Update inplace
         seen_indices.y = updated_total_indices.y
         seen_indices.height = updated_total_indices.height
@@ -256,6 +253,7 @@ class StreamingConv2dF(torch.autograd.Function):
                                       (0, 0),  # padding 
                                       dilation, 
                                       groups)
+
 
             if bias is not None:
                 grad_bias = relevant_grad[0].sum((1, 2))
@@ -672,7 +670,6 @@ class StreamingCNN(object):
         return output.to(self.device)
 
     def backward(self, image, grad):
-        print("backward SCNN")
         """Perform backward pass with streaming.
 
         Parameters:
@@ -800,7 +797,7 @@ class StreamingCNN(object):
                     trimmed_grad = trimmed_grad[:, :,
                                                 0:trimmed_output.shape[H_DIM],
                                                 0:trimmed_output.shape[W_DIM]]
-                
+
                 trimmed_output.backward(trimmed_grad)
 
                 # Memory management

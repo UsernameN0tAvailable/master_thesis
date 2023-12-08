@@ -105,9 +105,7 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, dirs: Opt
                         store_path = false_neg_path
 
                 _, height, _ = map_tensor.shape
-                original_image = Image.open(f'{data_dir}/hotspots-png/{img_names[i]}.png')
-                image = transforms.Compose([transforms.CenterCrop(height), transforms.ToTensor()])(original_image)
-                image_with_mask = torch.clamp(image + map_tensor, min=0.0, max=1.0) 
+                image_with_mask = torch.clamp(map_tensor, min=0.0, max=1.0) 
                 image = transforms.ToPILImage()(image_with_mask)
                 image.save(f'{store_path}/{img_names[i]}_map.png')
 
