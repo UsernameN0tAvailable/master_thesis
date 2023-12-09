@@ -34,7 +34,7 @@ from PIL import Image
 ssl._create_default_https_context = ssl._create_unverified_context
 
 
-def store_maps(labels: Tensor, predictions: Tensor, names: List[str], maps: Tensor, path: str ) -> None:
+def store_maps(labels: Tensor, predictions: Tensor, names: List[str], maps: Tensor, path: str, overlay_dir: Optional[str] = None) -> None:
         maps_path = f'{path}'
         if not os.path.exists(maps_path): os.makedirs(maps_path, exist_ok=True) 
 
@@ -67,8 +67,18 @@ def store_maps(labels: Tensor, predictions: Tensor, names: List[str], maps: Tens
                 else:
                     store_path = false_neg_path
 
-            image_with_mask = torch.clamp(map_tensor, min=0.0, max=1.0) 
-            image = transforms.ToPILImage()(image_with_mask)
+
+
+            if overlay_dir is not None:
+                _, height, _ = map_tensor.shape
+                original_image = Image.open(f'{overlay_dir}/hotspots-png/{names[i]}.png')
+                original_image = transforms.Compose([transforms.CenterCrop(height), transforms.ToTensor()])(original_image)
+                green_channel_tensor = torch.zeros_like(map_tensor)
+                green_channel_tensor[1] = map_tensor[1] * 10.0
+                map_tensor = original_image - green_channel_tensor 
+
+            
+            image = transforms.ToPILImage()(map_tensor)
             image.save(f'{store_path}/{names[i]}_map.png')
 
 
@@ -114,7 +124,7 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, dirs: Opt
             store_maps(labels, predicted, img_names, model.module.get_feature_maps(), feature_maps_dir)
 
         elif store_activation_maps:
-            store_maps(labels, predicted, img_names, model.module.get_activation_maps(), activation_maps_dir)
+            store_maps(labels, predicted, img_names, model.module.get_activation_maps(), activation_maps_dir, data_dir)
 
     dist.all_reduce(running_loss, op=dist.ReduceOp.AVG) # type: ignore
     epoch_loss: float = running_loss.item() / len(dataloader.dataset)
