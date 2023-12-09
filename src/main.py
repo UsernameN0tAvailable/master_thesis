@@ -33,6 +33,45 @@ from PIL import Image
 # fix ssl pytorch bug
 ssl._create_default_https_context = ssl._create_unverified_context
 
+
+def store_maps(labels: Tensor, predictions: Tensor, names: List[str], maps: Tensor, path: str ) -> None:
+        maps_path = f'{path}'
+        if not os.path.exists(maps_path): os.makedirs(maps_path, exist_ok=True) 
+
+        true_pos_path = f'{maps_path}/true_pos'
+        if not os.path.exists(true_pos_path): os.makedirs(true_pos_path)
+
+        false_pos_path = f'{maps_path}/false_pos'
+        if not os.path.exists(false_pos_path): os.makedirs(false_pos_path)
+
+        true_neg_path = f'{maps_path}/true_neg'
+        if not os.path.exists(true_neg_path): os.makedirs(true_neg_path)
+
+        false_neg_path = f'{maps_path}/false_neg'
+        if not os.path.exists(false_neg_path): os.makedirs(false_neg_path)
+
+            
+        for i, map_tensor in enumerate(maps):
+
+            prediction = int(predictions[i].int())
+            true_label = int(labels[i].int())
+
+            if prediction == true_label:
+                if prediction == 1:
+                    store_path = true_pos_path
+                else:
+                    store_path = true_neg_path
+            else:
+                if prediction == 1:
+                    store_path = false_pos_path
+                else:
+                    store_path = false_neg_path
+
+            image_with_mask = torch.clamp(map_tensor, min=0.0, max=1.0) 
+            image = transforms.ToPILImage()(image_with_mask)
+            image.save(f'{store_path}/{names[i]}_map.png')
+
+
 def step(model, optimizer: Optional[Optimizer], criterion, dataloader, dirs: Optional[Tuple[str, Optional[str], Optional[str]]] = None):
 
     device = RunTime.device()
@@ -72,46 +111,10 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, dirs: Opt
             optimizer.optimizer.zero_grad() 
         # store all activation maps
         elif store_feature_maps:
-            maps_path = f'{feature_maps_dir}'
-            if not os.path.exists(maps_path): os.makedirs(maps_path, exist_ok=True) 
+            store_maps(labels, predicted, img_names, model.module.get_feature_maps(), feature_maps_dir)
 
-            true_pos_path = f'{maps_path}/true_pos'
-            if not os.path.exists(true_pos_path): os.makedirs(true_pos_path)
-
-            false_pos_path = f'{maps_path}/false_pos'
-            if not os.path.exists(false_pos_path): os.makedirs(false_pos_path)
-
-            true_neg_path = f'{maps_path}/true_neg'
-            if not os.path.exists(true_neg_path): os.makedirs(true_neg_path)
-
-            false_neg_path = f'{maps_path}/false_neg'
-            if not os.path.exists(false_neg_path): os.makedirs(false_neg_path)
-
-            
-            for i, map_tensor in enumerate(model.module.get_feature_maps()):
-
-                prediction = int(predicted[i].int())
-                true_label = int(labels[i].int())
-
-                if prediction == true_label:
-                    if prediction == 1:
-                        store_path = true_pos_path
-                    else:
-                        store_path = true_neg_path
-                else:
-                    if prediction == 1:
-                        store_path = false_pos_path
-                    else:
-                        store_path = false_neg_path
-
-                _, height, _ = map_tensor.shape
-                image_with_mask = torch.clamp(map_tensor, min=0.0, max=1.0) 
-                image = transforms.ToPILImage()(image_with_mask)
-                image.save(f'{store_path}/{img_names[i]}_map.png')
-
-        if store_activation_maps:
-            print("GATHER SALIENCY MPAS")
-
+        elif store_activation_maps:
+            store_maps(labels, predicted, img_names, model.module.get_activation_maps(), activation_maps_dir)
 
     dist.all_reduce(running_loss, op=dist.ReduceOp.AVG) # type: ignore
     epoch_loss: float = running_loss.item() / len(dataloader.dataset)
@@ -187,7 +190,7 @@ def validate_model_and_extract(s):
     raise ValueError("Model type not available\nPossible types:\n- vit[<tile_size>]\n- stream[<cnn | vit | resnet | unet>|<cnn | vit | resnet | unet>, <patch_size>]\n- header_only")
 
 
-def create_model(param: Dict[str, Any], device: str) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
+def create_model(param: Dict[str, Any], device: str, store_activation_maps: bool = False) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
 
     RunTime.log(f"Model: {param}")
 
@@ -216,7 +219,7 @@ def create_model(param: Dict[str, Any], device: str) -> DinoFeatureClassifier | 
         else:
             raise ValueError(f'No {bottom_param} bottom net available!!')
 
-        return StreamingNet(top_net.to(device), bottom_net.to(device), param['value']) 
+        return StreamingNet(top_net.to(device), bottom_net.to(device), param['value'], store_activation_maps) 
     elif param['type'] == 'header_only':
         return MLPHeader()
     else:
@@ -346,7 +349,7 @@ def main():
     RunTime.log(f'Local Batch Size: {local_batch_size}', Rank.Local)
 
 
-    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device)
+    model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device, args.activation_maps_dir is not None)
 	
     best_f1: float = float(0.0)
     best_loss: float = float(1.0)

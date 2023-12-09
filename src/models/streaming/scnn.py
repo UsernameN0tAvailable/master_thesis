@@ -31,7 +31,7 @@ class StreamingNet(torch.nn.Module):
         self.bottom_net.to(device)
         return self
  
-    def __init__(self, top_net, bottom_net, tile_size: int):
+    def __init__(self, top_net, bottom_net, tile_size: int, store_saliency_maps: bool):
         super().__init__()
         self._feature_maps: Optional[Tensor]  = None 
         self._saliency_maps: Optional[Tensor]  = None 
@@ -43,7 +43,7 @@ class StreamingNet(torch.nn.Module):
 
         self.bottom_net = bottom_net
 
-        self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False, saliency=False)
+        self.scnn = StreamingCNN(bottom_net, tile_shape=(1, 3, tile_size, tile_size), deterministic=False, verbose=False, saliency=store_saliency_maps)
 
 
     def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor, store_feature_maps: bool = False, store_activation_maps: bool = False):
@@ -69,12 +69,29 @@ class StreamingNet(torch.nn.Module):
             loss.backward()
             self.scnn.backward(images, bottom_output.grad)
 
+        if store_activation_maps:
+            _, _, height, width = images.shape
+            activation_maps = self.scnn._saliency_maps.clone().cpu().detach()
+            activation_maps = torch.nn.functional.interpolate(activation_maps, size=(height, width), mode='bilinear', align_corners=False)
+            activation_maps = activation_maps.transpose(1, -1)
+            activation_maps = torch.nn.functional.avg_pool2d(activation_maps, kernel_size=(1, activation_maps.shape[3]//3))
+            activation_maps = activation_maps.transpose(1, -1)
+            activation_maps = torch.nn.functional.normalize(activation_maps, p=2, dim=0)
+            self._saliency_maps = activation_maps
+            del self.scnn._saliency_maps
+
+
         return top_output, loss
 
     def get_feature_maps(self) -> Tensor:
         if self._feature_maps is None:
             raise ValueError("Cannot get maps when they're not gathered!")
         return self._feature_maps
+
+    def get_activation_maps(self) -> Tensor:
+        if self._saliency_maps is None:
+            raise ValueError("Cannot get maps when they're not gathered!")
+        return self._saliency_maps
 
 
 # from torch.nn.grad import _grad_input_padding
@@ -761,6 +778,7 @@ class StreamingCNN(object):
                                         lost.top:gradient.shape[H_DIM] - lost.bottom,
                                         lost.left:gradient.shape[W_DIM] - lost.right]
 
+                
                 if not self.copy_to_gpu:
                     tile = tile.to(self.device, non_blocking=True)
 
@@ -804,6 +822,9 @@ class StreamingCNN(object):
                 del tile_output
                 del trimmed_grad
                 del trimmed_output
+
+        if self.gather_input_gradient:
+            self._saliency_maps = grad
 
 
         # Memory management
@@ -992,6 +1013,10 @@ class StreamingCNN(object):
     def _backward_saliency_hook(self, module: StreamingConv2d, grad_in, grad_out, is_bias=False, change_grad=True):
         stride: List[int] = _triple(module.stride)  # type:ignore
 
+        # Extract the relevant gradient tensor from grad_in tuple
+        # Assuming the second tensor in the tuple is the relevant one
+        grad_input_tensor = grad_in[1]
+
         # Trim gradient of invalid values
         sides = module.input_loc.sides
         grad_lost = module.grad_lost  # type: Lost
@@ -1006,27 +1031,35 @@ class StreamingCNN(object):
         new_output_box = module.tile_output_box
         updated_total_indices = module.seen_indices
 
-
-
-        if module.in_channels == 3 and grad_in is not None :
-            valid_grad_in = grad_in[0][:, :,
-                                       lost.top*stride[0]:grad_in[0].shape[2] - lost.bottom*stride[0],
-                                       lost.left*stride[1]:grad_in[0].shape[3] - lost.right*stride[1]]
+        if module.in_channels == 3 and grad_input_tensor is not None:
+            valid_grad_in = grad_input_tensor[:, :,
+                                          lost.top*stride[0]:grad_input_tensor.shape[2] - lost.bottom*stride[0],
+                                          lost.left*stride[1]:grad_input_tensor.shape[3] - lost.right*stride[1]]
 
             relevant_input_grad = valid_grad_in[:, :,
-                                                new_output_box.y*stride[0]:
-                                                new_output_box.y*stride[0] + new_output_box.height*stride[0],
-                                                new_output_box.x*stride[1]:
-                                                new_output_box.x*stride[1] + new_output_box.width*stride[1]]
+                                            new_output_box.y*stride[0]:
+                                            new_output_box.y*stride[0] + new_output_box.height*stride[0],
+                                            new_output_box.x*stride[1]:
+                                            new_output_box.x*stride[1] + new_output_box.width*stride[1]]
 
+            # Determine the update region within the saliency map
+            update_y_start = updated_total_indices.y * stride[0]
+            update_y_end = update_y_start + relevant_input_grad.shape[2]
+            update_x_start = updated_total_indices.x * stride[1]
+            update_x_end = update_x_start + relevant_input_grad.shape[3]
+
+            # Ensure the update region is within the bounds of the saliency map
+            update_y_end = min(update_y_end, self.saliency_map.shape[2])
+            update_x_end = min(update_x_end, self.saliency_map.shape[3])
+
+            # Update the saliency map in the determined region
             self.saliency_map[:, :,
-                              updated_total_indices.y * stride[0]:
-                              updated_total_indices.height * stride[0],
-                              updated_total_indices.x * stride[1] - relevant_input_grad.shape[3]:
-                              updated_total_indices.x * stride[1]] = relevant_input_grad.detach().cpu()
+                          update_y_start:update_y_end,
+                          update_x_start:update_x_end] = relevant_input_grad.detach().cpu()
 
             del relevant_input_grad
             del valid_grad_in
+
 
     @staticmethod
     def _new_value_indices(data_shape, data_indices, old_value_indices):
