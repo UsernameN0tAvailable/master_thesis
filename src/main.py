@@ -73,9 +73,9 @@ def store_maps(labels: Tensor, predictions: Tensor, names: List[str], maps: Tens
                 _, height, _ = map_tensor.shape
                 original_image = Image.open(f'{overlay_dir}/hotspots-png/{names[i]}.png')
                 original_image = transforms.Compose([transforms.CenterCrop(height), transforms.ToTensor()])(original_image)
-                green_channel_tensor = torch.zeros_like(map_tensor)
-                green_channel_tensor[1] = map_tensor[1] * 10.0
-                map_tensor = original_image - green_channel_tensor 
+                map_tensor = original_image + map_tensor 
+                map_tensor = torch.where(torch.abs(map_tensor) > 0.9, torch.zeros_like(map_tensor), map_tensor)
+                map_tensor = map_tensor + original_image
 
             
             image = transforms.ToPILImage()(map_tensor)

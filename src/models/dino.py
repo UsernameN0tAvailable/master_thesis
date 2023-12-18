@@ -123,8 +123,8 @@ class DinoFeatureClassifier(DinoFeature):
             activation_maps = activation_maps.transpose(1, -1)
             activation_maps = torch.nn.functional.avg_pool2d(activation_maps, kernel_size=(1, activation_maps.shape[3]//3))
             activation_maps = activation_maps.transpose(1, -1)
-            activation_maps = torch.nn.functional.normalize(activation_maps, p=2, dim=0)
-            self._attention_maps = activation_maps
+            activation_maps = torch.nn.functional.normalize(activation_maps, p=2, dim=0)            
+            self._attention_maps = activation_maps 
 
         loss = criterion(output, labels.view(-1))
 
