@@ -305,8 +305,8 @@ def main():
     if args.feature_maps_dir is not None:
         RunTime.execute(create_or_replace_folder, args.feature_maps_dir)
 
-    if args.activation_maps_dir is not None:
-        RunTime.execute(create_or_replace_folder, args.activation_maps_dir)
+    #if args.activation_maps_dir is not None:
+        #RunTime.execute(create_or_replace_folder, args.activation_maps_dir)
 
     device_count: int = torch.cuda.device_count()
     device: str = str(torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu'))

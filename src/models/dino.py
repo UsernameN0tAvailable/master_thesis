@@ -86,6 +86,8 @@ class DinoFeatureClassifier(DinoFeature):
             dino_arch=dino_arch, freeze=freeze
         )
 
+        self._attention_maps: Optional[Tensor] = None
+
         self.n_cls = n_cls
         self.dropout = torch.nn.Dropout2d(p=dropout)
 
@@ -111,7 +113,7 @@ class DinoFeatureClassifier(DinoFeature):
 
         return y_pixel
 
-    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor):
+    def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor, store_feature_maps: bool = False, store_activation_maps: bool = False):
         output = self.forward(images, 1, clinical_data=clinical_data)
         loss = criterion(output, labels.view(-1))
 
@@ -119,4 +121,9 @@ class DinoFeatureClassifier(DinoFeature):
             loss.backward()
 
         return output, loss
+
+    def get_activation_maps(self) -> Tensor:
+        if self._attention_maps is None:
+            raise ValueError("Cannot get maps when they're not gathered!")
+        return self._attention_maps
 
