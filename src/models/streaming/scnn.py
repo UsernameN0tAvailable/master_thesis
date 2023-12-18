@@ -78,8 +78,6 @@ class StreamingNet(torch.nn.Module):
             activation_maps = activation_maps.transpose(1, -1)
             activation_maps = torch.nn.functional.normalize(activation_maps, p=2, dim=0)
             self._saliency_maps = activation_maps
-            del self.scnn._saliency_maps
-
 
         return top_output, loss
 

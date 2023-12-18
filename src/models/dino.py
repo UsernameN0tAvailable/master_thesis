@@ -115,6 +115,17 @@ class DinoFeatureClassifier(DinoFeature):
 
     def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor, store_feature_maps: bool = False, store_activation_maps: bool = False):
         output = self.forward(images, 1, clinical_data=clinical_data)
+
+        if store_activation_maps:
+            _, _, height, width = images.shape
+            activation_maps = self.backbone.get_last_selfattention(images).cpu().detach()
+            activation_maps = torch.nn.functional.interpolate(activation_maps, size=(height, width), mode='bilinear', align_corners=False)
+            activation_maps = activation_maps.transpose(1, -1)
+            activation_maps = torch.nn.functional.avg_pool2d(activation_maps, kernel_size=(1, activation_maps.shape[3]//3))
+            activation_maps = activation_maps.transpose(1, -1)
+            activation_maps = torch.nn.functional.normalize(activation_maps, p=2, dim=0)
+            self._attention_maps = activation_maps
+
         loss = criterion(output, labels.view(-1))
 
         if optimizer is not None:
