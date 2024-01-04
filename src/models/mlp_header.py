@@ -23,7 +23,7 @@ class MLPHeader(nn.Module):
         x = self.fc3(x)
         return torch.softmax(x, dim=1)  # Softmax applied here
 
-    def step(self, _, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor):
+    def step(self, _, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor, store_feature_maps: bool = False, store_activation_maps: bool = False):
         output = self.forward(clinical_data)
         loss = criterion(output, labels.view(-1))
 
