@@ -232,8 +232,17 @@ class Random90Rotation:
         angle = random.choice([0, 90, 180, 270])
         return transforms.functional.rotate(img, angle)
 
-T = TypeVar('T')
+class CustomCrop:
+    def __init__(self, start_height, start_width, end_height, end_width):
+        self.start_height = start_height
+        self.start_width = start_width
+        self.end_height = end_height
+        self.end_width = end_width
 
+    def __call__(self, img):
+        return transforms.functional.crop(img, self.start_height, self.start_width, self.end_height - self.start_height, self.end_width - self.start_width)
+
+T = TypeVar('T')
 A = TypeVar('A')
 
 class Rank(Enum):
