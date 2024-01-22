@@ -92,7 +92,7 @@ class PathsAndLabels():
 
     def push(self, split: Dict[str, List[str]], oversample: float = 0.0):
 
-        is_oversample = oversample > len(split['1']) / (len(split['1']) + len(split['0']))
+        is_oversample = len(split['0']) != 0 and len(split['1']) != 0 and oversample > len(split['1']) / (len(split['1']) + len(split['0']))
 
         if is_oversample:
 
@@ -160,7 +160,8 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
     val_input_img_size = int(model_type["value"]) if model_type["type"] == "vit" else FULL_IMAGE_SIZE
 
     train_input_img_size = val_input_img_size
-    crop_val_fn = transforms.CenterCrop(val_input_img_size) 
+    #crop_val_fn = transforms.CenterCrop(val_input_img_size) 
+    crop_val_fn = CustomCrop(0, 0, 912, 912)
     train_batch_size = batch_size
     val_batch_size = batch_size 
 

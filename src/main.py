@@ -18,15 +18,18 @@ import numpy as np
 import math
 import ssl
 import re
+import colorsys
 
 # distribute
 from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
 import wandb
-from pipeline_utils import Rank, get_dataloaders, RunTime, Optimizer
+from pipeline_utils import Rank, get_dataloaders, RunTime, Optimizer, CustomCrop
 from torch.nn import SyncBatchNorm
 
 import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
 
 from PIL import Image
 
@@ -36,50 +39,79 @@ ssl._create_default_https_context = ssl._create_unverified_context
 
 def store_maps(labels: Tensor, predictions: Tensor, names: List[str], maps: Tensor, path: str, overlay_dir: Optional[str] = None) -> None:
         maps_path = f'{path}'
-        if not os.path.exists(maps_path): os.makedirs(maps_path, exist_ok=True) 
 
-        true_pos_path = f'{maps_path}/true_pos'
-        if not os.path.exists(true_pos_path): os.makedirs(true_pos_path)
+        for i, tensor in enumerate(maps):
 
-        false_pos_path = f'{maps_path}/false_pos'
-        if not os.path.exists(false_pos_path): os.makedirs(false_pos_path)
+            #    prediction = int(predictions[i].int())
+            #true_label = int(labels[i].int())
 
-        true_neg_path = f'{maps_path}/true_neg'
-        if not os.path.exists(true_neg_path): os.makedirs(true_neg_path)
-
-        false_neg_path = f'{maps_path}/false_neg'
-        if not os.path.exists(false_neg_path): os.makedirs(false_neg_path)
-
+            #if prediction == true_label:
+            #    if prediction == 1:
+            #        store_path = true_pos_path
+            #    else:
+            #        store_path = true_neg_path
+            #else:
+            #    if prediction == 1:
+            #        store_path = false_pos_path
+            #    else:
+            #        store_path = false_neg_path
             
-        for i, map_tensor in enumerate(maps):
+            tensor = (tensor - tensor.min()) / (tensor.max() - tensor.min())
 
-            prediction = int(predictions[i].int())
-            true_label = int(labels[i].int())
+            # store attention heads differently
+            heads_path = f'{maps_path}/heads'
+            if not os.path.exists(heads_path):
+                os.makedirs(heads_path)
+            for h_i, head_tensor in enumerate(tensor):
+                head_tensor = head_tensor.squeeze()
+                # Create a colormap (from white to red)
+                cmap = plt.get_cmap('hot')
+                cmap.set_under('black')  # Set background to black
 
-            if prediction == true_label:
-                if prediction == 1:
-                    store_path = true_pos_path
-                else:
-                    store_path = true_neg_path
-            else:
-                if prediction == 1:
-                    store_path = false_pos_path
-                else:
-                    store_path = false_neg_path
+                # Apply the colormap
+                np_array_colored = cmap(head_tensor)
 
+                # Convert to RGB format for manipulation
+                np_array_rgb = (np_array_colored[:, :, :3] * 255).astype(np.uint8)
 
+                # Convert back to image and save
+                head_heatmap = Image.fromarray(np_array_rgb)
+                head_heatmap.save(f'{heads_path}/{h_i}.png')
 
-            if overlay_dir is not None:
-                _, height, _ = map_tensor.shape
-                original_image = Image.open(f'{overlay_dir}/hotspots-png/{names[i]}.png')
-                original_image = transforms.Compose([transforms.CenterCrop(height), transforms.ToTensor()])(original_image)
-                map_tensor = original_image + map_tensor 
-                map_tensor = torch.where(torch.abs(map_tensor) > 0.9, torch.zeros_like(map_tensor), map_tensor)
-                map_tensor = map_tensor + original_image
+            # Function to convert HSV to RGB
+            def hsv_to_rgb(h, s, v):
+                return tuple(round(i * 255) for i in colorsys.hsv_to_rgb(h, s, v))
 
-            
-            image = transforms.ToPILImage()(map_tensor)
-            image.save(f'{store_path}/{names[i]}_map.png')
+            # Create 6 colors equally spaced in HSV and convert to RGB
+            colors = [hsv_to_rgb(i/6.0, 1, 1) for i in range(6)]
+
+            # Apply colors to channels and sum them up
+            colored_image = torch.zeros(3, 912, 912)
+            for color_i, color in enumerate(colors):
+                for j in range(3):
+                    colored_image[j] += tensor[color_i] * color[j]
+
+            # Clip values to valid range
+            colored_image = torch.clamp(colored_image, 0, 255)
+
+            # Convert to PIL image
+            colored_image = colored_image.permute(1, 2, 0).byte().numpy()
+
+            #if overlay_dir is not None:
+                #_, height, _ = map_tensor.shape
+                #original_image = Image.open(f'{overlay_dir}/hotspots-png/{names[i]}.png')
+                #original_image = transforms.Compose([CustomCrop(0, 0, 912, 912), transforms.ToTensor()])(original_image)
+                #original_image[0, :, :] = 0
+                #original_image[1, :, :] = 0
+                #map_tensor =  map_tensor 
+                #print("map sizes", map_tensor.shape)
+                #map_tensor = torch.where(torch.abs(map_tensor) > 0.9, torch.zeros_like(map_tensor), map_tensor)
+                #map_tensor = map_tensor + original_image 
+
+            image = Image.fromarray(colored_image, "RGB")
+            image.save(f'{maps_path}/{names[i]}_map.png')
+
+            #image = transforms.ToPILImage()(map_tensor)
 
 
 def step(model, optimizer: Optional[Optimizer], criterion, dataloader, dirs: Optional[Tuple[str, Optional[str], Optional[str]]] = None):

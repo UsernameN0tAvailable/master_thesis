@@ -1,3 +1,4 @@
+from PIL import Image
 import torch
 from torch import nn, Tensor
 import numpy as np
@@ -59,7 +60,7 @@ class DinoFeature(nn.Module):
         b = img.shape[0]
         feat_h = img.shape[2] // self.patch_size
         feat_w = img.shape[3] // self.patch_size
-        # get selected layer activations
+
         feat = self.backbone.get_intermediate_layers(x=img, n=n)
 
         feat_tokens = [f[:, 1:, :].reshape(b, feat_h, feat_w, -1).permute(0, 3, 1, 2) for f in feat]
@@ -69,7 +70,7 @@ class DinoFeature(nn.Module):
             feat_tokens = feat_tokens[0]
             feat_cls_token = feat_cls_token[0]
 
-        return feat_cls_token, feat_tokens
+        return feat_cls_token, feat_tokens     
 
 
 
@@ -100,7 +101,6 @@ class DinoFeatureClassifier(DinoFeature):
 
     def forward(self, img, n: Optional[int], clinical_data: Tensor):
 
-        # Compute embedding
         z, _ = super(DinoFeatureClassifier, self).forward(img, n=n)
         z: Tensor = z.unsqueeze(-1).unsqueeze(-1)
 
@@ -114,17 +114,37 @@ class DinoFeatureClassifier(DinoFeature):
         return y_pixel
 
     def step(self, images, labels, criterion, optimizer: Optional[Optimizer], clinical_data: Tensor, store_feature_maps: bool = False, store_activation_maps: bool = False):
-        output = self.forward(images, 1, clinical_data=clinical_data)
+
+        output  = self.forward(images, 1, clinical_data=clinical_data)
+
+        self._attention_maps = []
 
         if store_activation_maps:
-            _, _, height, width = images.shape
-            activation_maps = self.backbone.get_last_selfattention(images).cpu().detach()
-            activation_maps = torch.nn.functional.interpolate(activation_maps, size=(height, width), mode='bilinear', align_corners=False)
-            activation_maps = activation_maps.transpose(1, -1)
-            activation_maps = torch.nn.functional.avg_pool2d(activation_maps, kernel_size=(1, activation_maps.shape[3]//3))
-            activation_maps = activation_maps.transpose(1, -1)
-            activation_maps = torch.nn.functional.normalize(activation_maps, p=2, dim=0)            
-            self._attention_maps = activation_maps 
+            batch_size, _channels, img_height, img_width = images.shape
+            attentions  = self.backbone.get_last_selfattention(images).cpu()
+
+            n_patches = img_height // self.patch_size
+
+            nh = attentions.shape[1]
+
+            for b in range(batch_size):
+
+                image_attention = attentions[b, :, 0, 1:].reshape(nh, -1)
+
+                image_attention = image_attention.reshape(nh, n_patches, n_patches)
+                upsampled_attention = nn.functional.interpolate(
+                    image_attention.unsqueeze(0), 
+                    scale_factor=self.patch_size, 
+                    mode="nearest"
+                )[0].cpu().numpy()
+
+                self._attention_maps.append(upsampled_attention)
+
+            #activation_maps = activation_maps.transpose(1, -1)
+            #activation_maps = torch.nn.functional.avg_pool2d(activation_maps, kernel_size=(1, activation_maps.shape[3]//3))
+            #activation_maps = activation_maps.transpose(1, -1)
+            #activation_maps = torch.nn.functional.normalize(activation_maps, p=2, dim=0)            
+            #self._attention_maps = activation_maps 
 
         loss = criterion(output, labels.view(-1))
 
