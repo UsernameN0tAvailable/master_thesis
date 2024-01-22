@@ -161,7 +161,7 @@ def get_dataloaders(shift: int, data_dir: str, batch_size: int, oversample: floa
 
     train_input_img_size = val_input_img_size
     #crop_val_fn = transforms.CenterCrop(val_input_img_size) 
-    crop_val_fn = CustomCrop(0, 0, 912, 912)
+    crop_val_fn = CustomCrop(2736, 2736, 3648, 3648)
     train_batch_size = batch_size
     val_batch_size = batch_size 
 
@@ -234,7 +234,7 @@ class Random90Rotation:
         return transforms.functional.rotate(img, angle)
 
 class CustomCrop:
-    def __init__(self, start_height, start_width, end_height, end_width):
+    def __init__(self, start_width, start_height, end_width, end_height):
         self.start_height = start_height
         self.start_width = start_width
         self.end_height = end_height
