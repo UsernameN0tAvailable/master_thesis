@@ -1,12 +1,12 @@
-#Pipeline for Megapixel Resolution Whole Slide Image Analysis
+# Pipeline for Megapixel Resolution Whole Slide Image Analysis
 This project provides a comprehensive pipeline for the analysis of whole slide images at megapixel resolution. It leverages the power of deep learning and high-resolution image processing to facilitate advanced research and applications in the field of digital pathology and related areas.
 
-##Installation
+## Installation
 To set up the project environment, you need to install the required dependencies:
 ```bash
 pip install -r requirements.txt
 ```
-##Usage
+## Usage
 The main script of the pipeline is executed using the torchrun command. Below is a detailed description of the arguments that can be used:
 
 - --project: The name of the project (type: string, required).
