@@ -118,7 +118,7 @@ def validate_model_and_extract(s):
 def create_model(param: Dict[str, Any], device: str, has_clinical_data: bool = False) -> DinoFeatureClassifier | StreamingNet | MLPHeader:
 
     model: Optional[DinoFeatureClassifier | StreamingNet] = None
-    Logger.log("Model: {param}")
+    Logger.log(f"Model: {param}")
 
     if param['type'] == 'vit':
         return DinoFeatureClassifier(clinical_data=has_clinical_data)
