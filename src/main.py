@@ -238,43 +238,45 @@ def main():
 
     print("1.6")
 
-    dist.all_reduce(all_local_gpu_memories, op=dist.ReduceOp.SUM)
-    tot_gpu_memory: Number = all_local_gpu_memories.sum().item()
+    #dist.all_reduce(all_local_gpu_memories, op=dist.ReduceOp.SUM)
+    #tot_gpu_memory: Number = all_local_gpu_memories.sum().item()
 
-    print("1.7")
+    #print("1.7")
 
-    local_batch_size: int = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
+    #local_batch_size: int = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
 
-    print("1.8")
+    #print("1.8")
 
-    tot_batch_size_tensor: Tensor = torch.tensor(local_batch_size, dtype=torch.int, device=device)
-    dist.all_reduce(tot_batch_size_tensor, op=dist.ReduceOp.SUM)
-    tot_batch_size: Number = tot_batch_size_tensor.item()
+    #tot_batch_size_tensor: Tensor = torch.tensor(local_batch_size, dtype=torch.int, device=device)
+    #dist.all_reduce(tot_batch_size_tensor, op=dist.ReduceOp.SUM)
+    tot_batch_size: Number = 4 
 
     # Select GPU with lowest load to aggregate results
-    local_mem_per_sample: float =  local_gpu_memory / local_batch_size
+    #local_mem_per_sample: float =  local_gpu_memory / local_batch_size
 
-    all_mems_per_sample: Tensor = torch.zeros(device_count, dtype=torch.float32, device=device) 
-    all_mems_per_sample[rank] = torch.tensor(local_mem_per_sample, dtype=torch.float32, device=device)
+    #all_mems_per_sample: Tensor = torch.zeros(device_count, dtype=torch.float32, device=device) 
+    #all_mems_per_sample[rank] = torch.tensor(local_mem_per_sample, dtype=torch.float32, device=device)
 
-    dist.all_reduce(all_mems_per_sample, op=dist.ReduceOp.SUM)
+    #dist.all_reduce(all_mems_per_sample, op=dist.ReduceOp.SUM)
 
-    smallest_mem_per_sample_index: int =  int(all_mems_per_sample.argmin())
-    smallest_mem_per_sample: float = float(all_mems_per_sample[smallest_mem_per_sample_index].item())
+    #smallest_mem_per_sample_index: int =  int(all_mems_per_sample.argmin())
+    #smallest_mem_per_sample: float = float(all_mems_per_sample[smallest_mem_per_sample_index].item())
 
-    free_memory_per_gpu: List[float] = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
+    #free_memory_per_gpu: List[float] = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
 
-    print("2")
+    #print("2")
 
+    """
     for r, m in enumerate(free_memory_per_gpu):
         if (smallest_mem_per_sample * (all_local_gpu_memories[r].item() / tot_gpu_memory) ) <= m:
             free_memory_per_gpu[r] -= smallest_mem_per_sample
             tot_batch_size += 1
             if r == rank:
                 local_batch_size += 1
+    """
 
     # aggregating GPU always the one with the most space 
-    main_gpu: int = free_memory_per_gpu.index(max(free_memory_per_gpu))
+    main_gpu: int = 0 
 
     run_name: str = f'{args.type}_cv_{args.shift}_oversample_{args.oversample}'
     checkpoint_filepath: str = f'{args.models_dir}/{run_name}.pth'
