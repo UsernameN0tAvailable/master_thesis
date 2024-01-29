@@ -258,7 +258,7 @@ def main():
     checkpoint_filepath: str = f'{args.models_dir}/{run_name}.pth'
 
     torch.cuda.set_device(main_gpu)
-    Logger.init(run_name, main_gpu)
+    Logger.init(f'{run_name}_threshold_{threshold}', main_gpu)
     Logger.log(f'Tot Batch Size: {tot_batch_size}')
     Logger.log(f'Aggregate Results at GPU: {main_gpu}')
     Logger.log(f'Local Batch Size: {local_batch_size}', None)
