@@ -28,7 +28,7 @@ from torch.nn import SyncBatchNorm
 # fix ssl pytorch bug
 ssl._create_default_https_context = ssl._create_unverified_context
 
-def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: str, rank: int, device_count: int, average: Optional[str] ="weighted"):
+def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: str, rank: int, device_count: int, threshold: float = 0.5, average: Optional[str] ="weighted"):
 
     running_loss: Tensor = torch.tensor(0.0, device=device)
     true: List[np.ndarray] = []
@@ -43,7 +43,8 @@ def step(model, optimizer: Optional[Optimizer], criterion, dataloader, device: s
 
         output, loss = model.module.step(images, labels, criterion, optimizer, clinical_data)
         running_loss += loss.item() * images.size(0)
-        predicted = torch.max(output.data, 1)[1]
+        probs = torch.sigmoid(output.data[:, 1]) 
+        predicted = (probs > threshold).long()
         
         true.extend(labels.cpu().numpy())
         preds.extend(predicted.cpu().numpy())
@@ -189,8 +190,11 @@ def main():
     parser.add_argument("-i", action="store_true", default=False, help="Train with smaller images")
     parser.add_argument("-p", action="store_true", default=False, help="Pin Memory for more efficient memory management")
     parser.add_argument("--clinical_data", type=str, default=None, help="Additional clinical data file path for the classification net")
+    parser.add_argument("--threshold", type=float, default=0.5, help="last layer's decision threshold")
 
     args = parser.parse_args()
+
+    threshold: float = args.threshold 
 
     clinical_data: Optional[Dict[str, np.ndarray]] = None;
 
@@ -331,10 +335,10 @@ def main():
     while True and not args.t:
         model.train()
         train_dataloader.sampler.set_epoch(epoch)
-        train_loss, train_precision, train_recall, train_f1, _ = step(model, optimizer, criterion, train_dataloader, device, rank, device_count)
+        train_loss, train_precision, train_recall, train_f1, _ = step(model, optimizer, criterion, train_dataloader, device, rank,  device_count, threshold=threshold)
         model.eval()
         val_dataloader.sampler.set_epoch(epoch)
-        val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, criterion, val_dataloader, device, rank, device_count, average=None)
+        val_loss, val_precision, val_recall, val_f1, average_f1 = step(model, None, criterion, val_dataloader, device, rank, device_count, threshold=threshold, average=None)
 
         if rank == main_gpu:
 
@@ -383,7 +387,7 @@ def main():
         model = model.to(device)
         model.eval() 
         test_dataloader.sampler.set_epoch(epoch)
-        test_loss, test_precision, test_recall, test_f1, _ = step(model, None, criterion, test_dataloader, device, rank, device_count, average=None)
+        test_loss, test_precision, test_recall, test_f1, _ = step(model, None, criterion, test_dataloader, device, rank, device_count, threshold=threshold, average=None)
         if rank == main_gpu:
             wandb.finish()
             Logger.log(f'Best Val loss = {best_loss}\nTest:\nLoss: {test_loss}, Precision: {test_precision}, Recall: {test_recall}, F1: {test_f1}', None)
