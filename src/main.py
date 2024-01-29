@@ -236,7 +236,7 @@ def main():
     all_local_gpu_memories: Tensor = torch.zeros(device_count, dtype=torch.int64, device=device) 
     all_local_gpu_memories[rank] = torch.tensor(local_gpu_memory, dtype=torch.int64, device=device)
 
-    print("1.6")
+    print("1.6", all_local_gpu_memories)
 
     #dist.all_reduce(all_local_gpu_memories, op=dist.ReduceOp.SUM)
     #tot_gpu_memory: Number = all_local_gpu_memories.sum().item()
