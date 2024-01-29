@@ -234,6 +234,7 @@ def main():
     print("1.5")
 
     all_local_gpu_memories: Tensor = torch.zeros(device_count, dtype=torch.int64, device=device) 
+    print("1.5", rank)
     all_local_gpu_memories[rank] = torch.tensor(local_gpu_memory, dtype=torch.int64, device=device)
 
     print("1.6")
