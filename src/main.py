@@ -226,19 +226,27 @@ def main():
     device_count: int = torch.cuda.device_count()
     device: str = str(torch.device(f'cuda:{rank}') if args.device == 'cuda' else torch.device('cpu'))
 
+    print("1.4")
+
     # Memory Load Management
     local_gpu_memory: int = int(torch.cuda.get_device_properties(rank).total_memory / (1024 ** 2))
+
+    print("1.5")
 
     all_local_gpu_memories: Tensor = torch.zeros(device_count, dtype=torch.int64, device=device) 
     all_local_gpu_memories[rank] = torch.tensor(local_gpu_memory, dtype=torch.int64, device=device)
 
+    print("1.6")
+
     dist.all_reduce(all_local_gpu_memories, op=dist.ReduceOp.SUM)
     tot_gpu_memory: Number = all_local_gpu_memories.sum().item()
 
+    print("1.7")
+
     local_batch_size: int = int(args.batch_size * (local_gpu_memory / tot_gpu_memory))
 
-    print("1.4")
- 
+    print("1.8")
+
     tot_batch_size_tensor: Tensor = torch.tensor(local_batch_size, dtype=torch.int, device=device)
     dist.all_reduce(tot_batch_size_tensor, op=dist.ReduceOp.SUM)
     tot_batch_size: Number = tot_batch_size_tensor.item()
