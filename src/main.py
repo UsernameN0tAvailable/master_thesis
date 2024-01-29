@@ -175,6 +175,8 @@ def load_clinical_data(path: str) -> Dict[str, np.ndarray]:
 
 def main():
 
+    print("0")
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=str, required=True)
     parser.add_argument("--shift", type=int, default=0, choices=[0, 1, 2, 3, 4])
@@ -191,6 +193,8 @@ def main():
     parser.add_argument("-p", action="store_true", default=False, help="Pin Memory for more efficient memory management")
     parser.add_argument("--clinical_data", type=str, default=None, help="Additional clinical data file path for the classification net")
     parser.add_argument("--threshold", type=float, default=0.5, help="last layer's decision threshold")
+
+    print("1")
 
     args = parser.parse_args()
 
@@ -244,6 +248,8 @@ def main():
 
     free_memory_per_gpu: List[float] = list(map(lambda s, m: float(m.item()) - (int(m.item() / s.item()) * smallest_mem_per_sample), all_mems_per_sample, all_local_gpu_memories))
 
+    print("2")
+
     for r, m in enumerate(free_memory_per_gpu):
         if (smallest_mem_per_sample * (all_local_gpu_memories[r].item() / tot_gpu_memory) ) <= m:
             free_memory_per_gpu[r] -= smallest_mem_per_sample
@@ -263,6 +269,8 @@ def main():
     Logger.log(f'Aggregate Results at GPU: {main_gpu}')
     Logger.log(f'Local Batch Size: {local_batch_size}', None)
 
+    print("3")
+
 
     model_obj: DinoFeatureClassifier | StreamingNet | MLPHeader = create_model(model_type, device, clinical_data is not None)
 	
@@ -272,6 +280,8 @@ def main():
     checkpoint_dict = None
 
     is_resume = os.path.isfile(checkpoint_filepath)
+
+    print("4")
 
     if is_resume:
         Logger.log('Loading Stored')
@@ -331,6 +341,8 @@ def main():
     flag_tensor = torch.zeros(1).to(device)
 
     best_model_dict = None
+
+    print("5")
 
     while True and not args.t:
         model.train()
