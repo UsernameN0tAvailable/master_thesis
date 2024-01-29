@@ -281,6 +281,8 @@ def main():
     run_name: str = f'{args.type}_cv_{args.shift}_oversample_{args.oversample}'
     checkpoint_filepath: str = f'{args.models_dir}/{run_name}.pth'
 
+    local_batch_size: int = 1
+
     torch.cuda.set_device(main_gpu)
     Logger.init(f'{run_name}_threshold_{threshold}', main_gpu)
     Logger.log(f'Tot Batch Size: {tot_batch_size}')
